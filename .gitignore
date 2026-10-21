@@ -1,0 +1,14 @@
+node_modules/
+.env
+.agent-state/
+dist/
+workspace/*
+!workspace/hello.ts
+docs/
+skills/*
+!skills/.gitkeep
+.vscoe/
+
+# Local agent state (may contain private conversations and MCP configuration)
+.mini-agent/
+.agent-command-logs/
