@@ -23,32 +23,51 @@ test('long-term memory survives reopen, supports search/update/delete', async ()
     assert.equal((await LongTermMemory.open(file)).search('Node.js').length, 1);
     assert.equal(await two.remove(saved.id), true);
     assert.equal((await LongTermMemory.open(file)).list().length, 0);
-  } finally { await rm(root, {recursive:true,force:true}); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('memory writes require explicit human approval', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-memory-'));
   try {
-    const memory = await ScopedMemory.open(join(root, 'facts.json'),join(root,'global.json'));
-    const tools = new ToolRegistry(); registerMemoryTools(tools, memory);
-    assert.match(await tools.invoke('memory_save', {text:'remember me'}, async () => false), /denied/);
+    const memory = await ScopedMemory.open(join(root, 'facts.json'), join(root, 'global.json'));
+    const tools = new ToolRegistry();
+    registerMemoryTools(tools, memory);
+    assert.match(
+      await tools.invoke('memory_save', { text: 'remember me' }, async () => false),
+      /denied/,
+    );
     assert.equal(memory.list().length, 0);
-    await tools.invoke('memory_save', {text:'remember me'}, async () => true);
+    await tools.invoke('memory_save', { text: 'remember me' }, async () => true);
     assert.equal(memory.list().length, 1);
-  } finally { await rm(root, {recursive:true,force:true}); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('compaction keeps latest user and tool call/result together', async () => {
   const tools = new ToolRegistry();
-  tools.register({name:'ping',description:'ping',parameters:{type:'object',properties:{}},execute:async()=> 'pong'});
+  tools.register({
+    name: 'ping',
+    description: 'ping',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => 'pong',
+  });
   let counter = 0;
-  const model: Model = {complete:async()=> ++counter % 2 ? {content:null,toolCalls:[{id:String(counter),name:'ping',arguments:'{}'}]} : {content:'done',toolCalls:[]}};
-  const agent = new Agent(model,tools,'system',{maxHistoryChars:250});
+  const model: Model = {
+    complete: async () =>
+      ++counter % 2
+        ? { content: null, toolCalls: [{ id: String(counter), name: 'ping', arguments: '{}' }] }
+        : { content: 'done', toolCalls: [] },
+  };
+  const agent = new Agent(model, tools, 'system', { maxHistoryChars: 250 });
   await agent.run('older message '.repeat(50));
   await agent.run('new message');
-  assert(agent.history.some(x => x.role==='user' && x.content==='new message'));
-  for (let i=0;i<agent.history.length;i++) {
-    const msg=agent.history[i];
-    if (msg.role==='assistant' && msg.tool_calls?.length) assert.equal(agent.history[i+1].role,'tool');
+  assert(agent.history.some((x) => x.role === 'user' && x.content === 'new message'));
+  for (let i = 0; i < agent.history.length; i++) {
+    const msg = agent.history[i];
+    if (msg.role === 'assistant' && msg.tool_calls?.length)
+      assert.equal(agent.history[i + 1].role, 'tool');
   }
 });

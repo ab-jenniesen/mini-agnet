@@ -4,7 +4,8 @@ import { sep, delimiter, resolve } from 'node:path';
 /** Environment details are generated at runtime, never migrated from another machine. */
 export function currentEnvironment(workspace: string): string {
   const os = platform();
-  const family = os === 'win32' ? 'Windows' : os === 'linux' ? 'Linux' : os === 'darwin' ? 'macOS' : os;
+  const family =
+    os === 'win32' ? 'Windows' : os === 'linux' ? 'Linux' : os === 'darwin' ? 'macOS' : os;
   return [
     '## Current execution environment (runtime detected)',
     `Operating system: ${family} (${os}, ${release()})`,

@@ -3,28 +3,32 @@
   "version": "1.0.1",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
-    "dev": "tsx src/tui.tsx",
-    "demo": "tsx src/examples/mock-demo.ts",
-    "graph": "tsx src/examples/langgraph-demo.ts",
-    "test": "tsx --test tests/*.test.ts",
-    "check": "tsc --noEmit",
+    "dev": "tsx src/tui.ts",
+    "demo": "node scripts/offline-demo.mjs",
+    "server": "tsx src/server.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
+    "check": "tsc --noEmit && node --check bin/mini-agent.mjs && node --check lib/portable.mjs && node --check scripts/offline-demo.mjs",
     "dev:classic": "tsx src/cli.ts",
-    "link:global": "npm link"
+    "link:global": "npm link",
+    "format": "prettier --write src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md",
+    "format:check": "prettier --check src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md"
   },
   "dependencies": {
-    "@langchain/langgraph": "^1.0.0",
+    "@earendil-works/pi-tui": "1.3.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "dotenv": "^16.4.5",
-    "zod": "^3.25.0",
-    "ink": "^6.0.0",
-    "react": "^19.0.0"
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@xterm/headless": "^6.0.0",
+    "prettier": "^3.9.10",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
-    "@types/react": "^19.0.0"
+    "typescript": "^5.9.0"
   },
   "bin": {
     "mini-agent": "./bin/mini-agent.mjs"

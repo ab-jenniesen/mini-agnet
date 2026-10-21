@@ -1,200 +1,198 @@
-# Mini Agent v1
+# Mini Agent
 
-基于 **TypeScript、Node.js、React Ink** 的本地单智能体（Single-Agent）Coding Harness。通过统一的模型消息与工具接口，将模型调用、上下文构造、文件操作、权限审批、记忆管理和终端交互组织成可扩展的应用。Agent 运行时与界面展示解耦，当前提供交互式终端和经典命令行入口。
+一个用于学习 Agent 架构的 TypeScript 编码助手。项目自行实现模型与工具之间的循环，用 Pi TUI 提供终端界面，并提供经典 CLI 和 HTTP/SSE 接口。
 
-> **运行边界**：本项目不是操作系统沙箱。文件权限是应用层策略，不能约束所有外部程序或 MCP Server 的副作用。不要在不可信目录或含有敏感信息的环境中授予自动执行权限。
+界面通过 `AgentClient` 发送结构化命令、订阅事件。Agent 核心负责模型调用与工具执行，应用运行时负责会话、配置、审批和持久化。接入 Web、桌面或 App 时，可以复用这套接口。学习代码建议从 [ARCHITECTURE.md](./ARCHITECTURE.md) 开始。
 
-## 功能概览
+## 环境与启动
 
-| 分类 | 功能 |
-| --- | --- |
-| Agent Runtime | 多轮 Agent Loop、Tool Calling、工具参数校验、错误结果回传、取消请求与执行日志 |
-| 模型服务 | 多供应商适配、动态模型列表、交互式选择模型、API Key 输入与保存、恢复上次模型 |
-| 推理与交互 | 流式回答、供应商可用时的 Thinking 内容、工具执行状态、统计、Todo 和审批交互 |
-| 文件与命令 | 列目录、分页读取、文件 SHA-256 验证、写入冲突检测、命令执行、工具输出归档与分页查看 |
-| 工作区权限 | 启动目录为主工作区、只读/询问/自动写入三档、可申请额外可写目录、滚动 Diff 审批 |
-| 会话与记忆 | 项目独立会话、全局/项目两级长期记忆、关键词检索、历史检索、持久化对话摘要 |
-| 上下文工程 | 根据模型能力配置上下文预算、工具结果裁剪与引用、记忆召回、历史压缩 |
-| 扩展配置 | 全局/项目 Skills、MCP stdio 工具、分层 Settings、项目指令 |
-| 可移植性 | 当前系统环境信息注入、跨系统状态包导出/检查/导入（`.magent`） |
-| 示例与测试 | 模拟模型示例、独立 LangGraph 工作流示例及自动化测试文件 |
-
-## 环境要求
-
-- Node.js **20 或更高版本**（建议使用近期 LTS 版本）及 npm。
-- 访问对应模型服务所需的网络连接和 API Key；Ollama 等本地服务可按其部署方式使用。
-- 终端需要支持基本交互与 ANSI 输出，推荐 Windows Terminal、PowerShell 7、Linux/macOS 常见终端。
-
-跨平台路径处理面向 Windows、Linux、macOS 设计；不同系统的命令执行、MCP 服务依赖、Ink 终端行为仍需在目标系统上独立测试。
-
-## 安装与启动
-
-在 Mini Agent 源码根目录执行：
+- Node.js **22.19.0 或更高版本**，以及 npm。
+- TUI 需要支持 ANSI 的交互终端，例如 Windows Terminal。
+- 在线模型需要对应的 API Key；本地服务按供应商要求配置。
 
 ```bash
 npm install
-npm run check
-npm test
-npm link
+npm run dev
 ```
 
-进入需要处理的项目目录：
+其他入口：
 
 ```bash
-cd /path/to/your-project
+npm run dev:classic   # 经典 readline CLI
+npm run server        # HTTP/SSE 后端，默认 127.0.0.1:3000
+npm run demo          # 离线演示基本模型/工具循环，不调用在线模型
+```
+
+全局使用：
+
+```bash
+npm link
+cd /path/to/project
 mini-agent
 ```
 
-当前目录成为**主工作区**；程序在该目录初始化 `.mini-agent/`。也可在源码目录执行 `npm run dev` 启动 Ink TUI，或执行 `npm run dev:classic` 使用经典 CLI。`npm run demo` 运行模拟模型，`npm run graph` 运行独立的 LangGraph 示例。
+`mini-agent --classic` 使用经典 CLI。启动目录默认是主工作区；可以通过 `AGENT_WORKSPACE` 覆盖。非 TTY 或 `TERM=dumb` 时，TUI 入口自动使用经典 CLI，支持管道输入。
 
-首次运行默认选用 DeepSeek；若当前模型没有可用凭据，终端可提示输入 API Key。模型选择可在后续启动时恢复。动态模型列表取自供应商接口，未能查询时会标明回退列表；列出的型号不保证都支持对话与工具调用。
+## 模型和 API Key
 
-## 常用终端命令
+复制 `.env.example` 为 `.env`，填写需要的密钥。真实 `.env` 已被 Git 忽略。
 
-| 命令 | 说明 |
-| --- | --- |
-| `/help` | 显示帮助 |
-| `/model`、`/models` | 交互式选择供应商与模型 |
-| `/model <provider> [model-id]` | 指定供应商及模型 |
-| `/refresh-models` | 刷新当前模型列表 |
-| `/key <provider>` | 设置对应厂商的 API Key |
-| `/thinking on\|collapse\|off` | 控制 Thinking 面板；可用 `Ctrl+T` 切换 |
-| `/permission read-only\|ask\|allow` | 更改本次运行的文件写入权限 |
-| `/dirs`、`/addDir <path>` | 查看或申请额外可写目录 |
-| `/memories [project\|global]` | 查看项目或全局记忆 |
-| `/todos`、`/stats` | 查看任务与统计 |
-| `/outputs`、`/output <id> [offset]` | 列出和分页查看归档工具输出 |
-| `/reset`、`/exit` | 重置当前会话、退出终端 |
+当前支持 DeepSeek、OpenAI、Anthropic、Gemini、Qwen、Kimi、GLM、SiliconFlow、Groq、Ollama 和自定义 OpenAI 兼容服务。首次启动默认 DeepSeek；具体默认模型见 `src/core/providers.ts`。模型列表优先在线发现，失败时提供备用列表和手动输入。
 
-### 权限规则
-
-- **只读（read-only）**：拒绝内置写入及可能产生副作用的命令。
-- **写入前确认（ask，默认）**：展示文件 Diff，等待批准或拒绝。
-- **自动写入（allow）**：允许在授权目录内直接写文件，但仍检查文件版本；`run_command` 仍需单独审批。
-- **扩展目录**：通过 `/addDir` 或 Agent 工具 `request_write_directory` 申请。即使处于 `allow` 模式，也必须获得明确批准；缺失目录可在审批后创建。
-
-已有文件更新要求与先前读取版本匹配的 `expectedSha256`。如文件已在外部发生变化，会返回冲突而非覆盖。SHA-256 校验并不能消除所有跨进程竞态；没有沙箱时，也不能通过应用层设置完全限制命令与 MCP 的副作用。
-
-## 项目数据与配置
-
-Mini Agent 采用**用户全局配置 + 当前主项目状态**的双层组织方式：
+也可以在 TUI 输入：
 
 ```text
-~/.config/mini-agent/
-├── credentials.json          # 用户级 API Key（本地存储，非加密保险库）
-├── model-selection.json      # 上次选择的模型
-├── memories.json             # 全局长期记忆
-├── settings.json             # 全局设置
-├── mcp.json                  # 全局 MCP 配置
-└── skills/                   # 全局 Skills
-
-<project>/.mini-agent/
-├── PROJECT.md                # 当前项目的指导说明
-├── settings.json             # 项目设置
-├── mcp.json                  # 项目 MCP 配置
-├── skills/                   # 项目 Skills
-├── memories.json             # 项目长期记忆
-├── sessions/                 # 项目对话历史
-├── compactions/              # 持久化历史摘要
-├── todos/                    # Todo 数据
-├── artifacts/                # 归档工具输出
-├── journals/                 # 工具执行日志
-├── approvals/                # 审批记录
-└── workspace-grants.json     # 额外可写目录授权
+/model
+/key deepseek
 ```
 
-不同主项目的会话与项目记忆独立；各项目可以共享全局记忆。记忆写入默认归属项目，也可显式选择 `global`。全局和项目同名 Skill/MCP 配置以**项目项优先**，项目配置可关闭全局 MCP 项。扩展工作区仅作为授权访问目录，不会自动在其中生成 `.mini-agent/`。
+密钥输入会遮挡显示，随后选择仅本次运行使用或保存到本机。保存位置默认是 `~/.config/mini-agent/credentials.json`，属于明文文件。临时密钥不会写入环境变量或会话。当前运行时中新输入的密钥优先使用；重新启动后，环境变量优先于已保存的凭据。
 
-**数据隐私**：`.mini-agent/` 可能包含对话和工具结果，建议在项目根目录 `.gitignore` 中加入 `.mini-agent/`。API Key 不进入项目目录，但本地凭据文件本身不加密。不要将密钥写入记忆、Skills 或工具日志。
+模型选择默认保存在 `~/.config/mini-agent/model-selection.json`。Ollama 和自定义服务可通过 `OLLAMA_BASE_URL`、`CUSTOM_BASE_URL` 等供应商变量设置地址。
 
-## 上下文工程与工具输出
+## 终端交互
 
-Agent 保存完整会话记录，同时按当前模型的上下文预算构造每次请求：选取相关记忆、必要的历史消息和工具结果引用，在接近预算时执行摘要或历史压缩。Token 使用量为估算值，模型提供的上下文能力元数据不一定完整，可通过环境变量覆盖相关参数。
+TUI 使用 [Pi TUI](https://github.com/earendil-works/pi/tree/main/packages/tui)，启动时展示由头像转换的 Unicode 点阵字符画，保存在 `src/presentation/assets/launch-art.txt`。图案按终端字符格等比缩放，窗口过小时使用简短标识。
 
-长工具输出采用**归档 + 预览 + 按需读取**：完整收到的结果存入 `artifacts/`；模型历史携带预览与归档标识；模型可用 `read_tool_output(id, offset, limit)` 读取后续内容；TUI 可以查看归档。命令日志尽可能直接保存，避免终端预览长度等同于模型上下文长度。
+默认使用备用屏幕：启动后显示独立界面，退出时恢复原终端。对话区支持应用内鼠标滚动，底部保留输入与提示区域。设置 `AGENT_TUI_SCREEN=regular` 可改用终端主屏幕及原生滚动缓冲区。
 
-历史摘要单独持久化，完整原始消息仍保留在项目会话记录中，并可通过历史检索工具查找。摘要不保证无损；文件是否最新必须由文件工具重新检查，不能仅凭旧对话确认。
+每条用户消息开始新一轮对话，以独立边框包住用户输入、助手回复和工具调用。边框按窗口宽度调整，流式回复和执行中的工具也显示在本轮框内；模型内部多次调用标为“第 N 步”。
 
-## 模型、Skills 与 MCP
+| 内容           | 展示方式                                                |
+| -------------- | ------------------------------------------------------- |
+| 用户消息       | 绿色标签与正文，保留在对话区                            |
+| 助手回复       | Markdown 正文，保留在对话区                             |
+| Token 用量     | 每条助手回复下方的暗色文字                              |
+| 工具执行       | 显示当前执行进度，每轮保留最近 5 条已完成调用及结果摘要 |
+| 状态提示       | 底部原位替换，保留最新提示                              |
+| 帮助和查询结果 | 输入框上方的临时面板，可翻页、关闭                      |
+| 权限审批       | 单独的确认面板，显示参数或文件差异                      |
 
-内置的供应商适配覆盖 DeepSeek、OpenAI、Anthropic Claude、Google Gemini、Qwen、Kimi、GLM、SiliconFlow、Groq、Ollama 和自定义 OpenAI 兼容服务。不同供应商通过统一内部消息格式接入，切换模型时保留会话，但原厂推理内部状态不保证跨模型无损迁移。
+最终回复显示本轮所有成功模型调用返回的用量，包括上下文摘要调用；中间回复显示该次调用用量。供应商没有提供用量时会标明，部分调用缺少用量时会标注部分统计。Token 数随会话消息保存。终端无法单独缩小字号，因此使用暗色文字区分。
 
-- **Skills**：从全局和项目 `skills/` 加载可复用说明；项目同名 Skill 覆盖全局项。
-- **MCP**：通过配置连接受信任的 stdio MCP Server，导入的 MCP 配置不会自动获得执行信任。
-- **LangGraph**：`src/examples/langgraph-demo.ts` 是独立工作流示例；主 Agent 使用自研 Agent Loop。
+超过展示上限的工具记录以“已折叠 N 条”标记；这个限制只影响 TUI 展示，完整会话历史和工具执行不受影响。`AGENT_TUI_MAX_TOOL_ENTRIES` 可设置每轮显示条数，须为正整数；当前执行中的工具单独显示。已归档的完整工具结果仍可通过 `/outputs`、`/output` 查看。
 
-## 项目结构
+| 按键                      | 操作                                                     |
+| ------------------------- | -------------------------------------------------------- |
+| `Enter`                   | 发送；命令候选打开时确认候选                             |
+| `Shift+Enter` / `Ctrl+J`  | 换行；不支持修饰键的终端也可用反斜杠后接 Enter           |
+| `←` / `→`、`Home` / `End` | 移动输入光标                                             |
+| `Backspace`               | 删除光标前的字符或完整 emoji                             |
+| `Delete` / `Ctrl+D`       | 删除光标处的字符                                         |
+| `↑` / `↓`                 | 空输入时浏览历史，候选打开时选择候选；多行输入时移动光标 |
+| `Tab`                     | 命令、参数或文件路径补全                                 |
+| `PgUp` / `PgDn`           | 回看对话；面板打开时翻页面板                             |
+| `Ctrl+Home` / `Ctrl+End`  | 全屏模式中跳到对话顶部或底部                             |
+| `Ctrl+Shift+F`            | 全屏模式中搜索对话，Esc 关闭搜索                         |
+| `Ctrl+T`                  | 展开、折叠或隐藏思考显示                                 |
+| `Ctrl+C`                  | 执行中取消任务；空闲时先清空草稿，空草稿时退出           |
+| `Esc`                     | 关闭候选、帮助、查询或确认面板                           |
+
+输入 `/` 自动显示命令建议。`/permission`、`/thinking`、`/session` 等支持参数补全。历史输入仅保留在当前进程；会话消息持久保存。剪贴板、中文输入法定位和修饰键表现仍取决于实际终端。
+
+## 斜杠命令
+
+| 命令                                  | 用途                                 |
+| ------------------------------------- | ------------------------------------ |
+| `/help`                               | 按类型、命令、内容、示例纵向显示帮助 |
+| `/model`、`/models`                   | 选择供应商和模型                     |
+| `/model <provider> [model-id]`        | 选择指定供应商或模型                 |
+| `/refresh-models`                     | 重新获取当前供应商的模型列表         |
+| `/key <provider>`                     | 配置密钥                             |
+| `/session`                            | 列出会话                             |
+| `/session <id>`                       | 切换或创建会话                       |
+| `/session delete <id>`                | 确认后删除会话及其专属数据           |
+| `/reset`                              | 清空当前对话和 Todo，保留长期记忆    |
+| `/permission [read-only\|ask\|allow]` | 查看或切换权限                       |
+| `/dirs`、`/addDir <path>`             | 查看可写目录或申请目录授权           |
+| `/thinking [on\|collapse\|off]`       | 控制思考显示                         |
+| `/todos`、`/stats`、`/tools`          | 查看任务、统计和工具                 |
+| `/memories [project\|global]`         | 查看长期记忆                         |
+| `/outputs`                            | 查看当前会话引用的归档输出           |
+| `/output <id> [offset]`               | 按字符偏移分页查看归档输出           |
+| `/close-output`                       | 关闭输出面板，也可按 Esc             |
+| `/exit`                               | 退出                                 |
+
+会话 ID 是 1–64 位英文字母、数字、下划线或连字符。删除当前会话后自动切换；长期记忆和共享工具输出归档保留。经典 CLI 复用相同命令路由，以普通文本显示结果；`/model` 列出选项后通过完整命令选择，思考面板显示模式属于 TUI 功能。
+
+## 多端接入
+
+应用接口位于 `src/app/contracts.ts`：
 
 ```text
-bin/mini-agent.mjs             # 全局 CLI 与迁移子命令
-lib/portable.mjs               # .magent 归档、检查和导入
-src/
-├── core/                       # Agent Loop、模型适配、上下文、工具注册、权限
-├── infra/                      # 工作区、记忆、配置、缓存、MCP、归档、日志
-├── tools/                      # 文件、命令、记忆、历史、工作区工具
-├── presentation/               # 独立 UI 事件、状态模型、Ink 组件
-├── tui.tsx                     # Ink 终端入口
-├── cli.ts                      # 经典 CLI 入口
-└── examples/                   # Mock Agent 与 LangGraph 示例
-tests/                          # 自动化测试
-skills/                         # 示例 Skill
-workspace/                      # 示例工作区文件
-docs/                           # 技术参考
+initialize()          获取初始状态
+subscribe(listener)   订阅消息、流式进度、状态和审批事件
+dispatch(command)     执行结构化命令
+close()               释放当前客户端或宿主资源
 ```
 
-Agent 核心不直接依赖 Ink 展示组件。当前已实现终端交互，统一展示事件与 ViewModel 可供未来的 Web、桌面和移动端适配器消费；多端应用本身及跨进程通信服务并不包含在本项目中。
+TUI 和经典 CLI 使用进程内 `AgentRuntime`；浏览器或桌面前端可以使用 `HttpAgentClient`，也可以基于相同协议实现 IPC/WebSocket 适配器。
 
-## 跨平台迁移
+HTTP 后端提供：
 
-在原设备的项目目录导出项目数据（**不包含源码或 API Key**）：
+| 接口                 | 用途                             |
+| -------------------- | -------------------------------- |
+| `GET /api/state`     | 当前状态快照                     |
+| `GET /api/events`    | SSE 事件流，连接后先发送当前快照 |
+| `POST /api/commands` | 接收经过校验的结构化命令         |
+
+请求使用 `Authorization: Bearer <token>`。未设置 `AGENT_SERVER_TOKEN` 时，启动后端会生成并在终端显示本次令牌。浏览器接入时设置 `AGENT_CLIENT_ORIGIN` 为前端的完整 Origin。后端默认仅监听本机；跨设备访问需要部署后端及相应网络入口。
+
+目前提供的是运行时、协议和适配器，尚未实现 Web、桌面或移动界面。同一后端中的客户端共享活动会话，一次只运行一个任务。同一个会话文件应由一个运行时负责写入；多用户服务需要在宿主层分配运行时与工作区。
+
+## 工具、权限和上下文
+
+- 文件工具支持目录浏览、分页读取、SHA-256 校验及写入。覆盖已有文件前必须读取并提交 `expectedSha256`；外部修改会产生冲突。
+- `read-only` 拒绝写入、命令和外部 MCP 调用；`ask` 在写入前审批；`allow` 自动允许已授权目录内的内置写入。命令、额外目录和 MCP 调用仍需确认。
+- Agent 可以管理 Todo、搜索会话、读写项目/全局长期记忆，并按需读取归档工具输出。
+- 上下文窗口默认 **128k（131,072 Token）**，包含输入、工具定义和输出预留；默认预留 8,192 Token 输出及 8% 安全余量，因此可用输入预算小于 128k。可以召回记忆、裁剪工具结果，并在达到可用输入预算的 80% 时压缩完整旧轮次；当前轮次仍超出预算时会报错，原始历史保存在磁盘。模型实际容量较小时，使用 `AGENT_CONTEXT_WINDOW_OVERRIDE` 调低窗口。
+- Settings、Skills 和 stdio MCP 支持全局及项目配置，项目配置优先。
+
+文件权限是应用层策略，不是操作系统沙箱。获批程序和 MCP Server 的副作用无法完全被工作区路径检查约束。取消会停止后续调用，并尝试终止正在执行的命令进程树；已经发生的文件或外部副作用不会自动回滚。
+
+## 配置与 Git
+
+主工作区的 `.mini-agent/` 保存项目指令、配置、会话、记忆、Todo、压缩摘要、审批、执行日志和工具输出。用户级配置位于 `~/.config/mini-agent/`，保存凭据、模型选择、全局记忆、Settings、Skills 和 MCP 配置。
+
+应提交源码、测试、文档、`package.json`、`package-lock.json`、`.env.example`、格式配置和启动图案。真实 `.env`、`.mini-agent/`、`.agent-state/`、`.agent-command-logs/`、`node_modules/`、`.tmp/` 和构建输出保留在本地。
+
+常用环境变量：
+
+| 变量                                                             | 用途                                      |
+| ---------------------------------------------------------------- | ----------------------------------------- |
+| `AGENT_WORKSPACE`、`AGENT_SESSION_ID`                            | 工作区与启动会话                          |
+| `AGENT_TUI_SCREEN`                                               | 默认全屏；`regular` 使用主屏幕            |
+| `AGENT_TUI_MAX_TOOL_ENTRIES`                                     | 每轮已完成工具记录展示上限，默认 5        |
+| `AGENT_MAX_STEPS`、`AGENT_MAX_INPUT_CHARS`                       | 模型轮数与输入上限，默认 15、65536        |
+| `AGENT_CONTEXT_WINDOW_OVERRIDE`、`AGENT_OUTPUT_RESERVE`          | 总上下文窗口与输出预留，默认 131072、8192 |
+| `AGENT_CONTEXT_SUMMARIZE`、`AGENT_COMPACT_THRESHOLD`             | 摘要开关和压缩阈值                        |
+| `AGENT_MODEL_STATE_FILE`、`AGENT_CREDENTIALS_FILE`               | 模型选择与凭据路径                        |
+| `AGENT_MEMORY_FILE`、`AGENT_GLOBAL_MEMORY_FILE`                  | 项目与全局记忆路径                        |
+| `AGENT_ARTIFACT_DIR`                                             | 工具输出归档目录                          |
+| `MCP_COMMAND`、`MCP_ARGS_JSON`                                   | 额外 stdio MCP Server                     |
+| `AGENT_SERVER_PORT`、`AGENT_SERVER_TOKEN`、`AGENT_CLIENT_ORIGIN` | HTTP 后端配置                             |
+
+完整起始配置见 `.env.example`。
+
+## 状态迁移
+
+在目标项目目录使用：
 
 ```bash
-mini-agent export --out ./my-project.magent
-mini-agent export --global --out ./my-project-global.magent
+mini-agent export --out ./project.magent
+mini-agent inspect ./project.magent
+mini-agent import ./project.magent
 ```
 
-在新系统安装 Mini Agent、准备好同一项目的源码后执行：
+`--global` 包含全局状态；导入默认预览，确认后仅创建不存在的文件。迁移包不包含源代码、依赖和 API 凭据；MCP 默认禁用，外部目录授权需要重新核对。对话或工具结果也可能含有敏感内容；导出会检查常见密钥格式。
+
+## 开发检查
 
 ```bash
-cd /path/to/your-project
-mini-agent inspect /path/to/my-project.magent
-mini-agent import /path/to/my-project.magent
-# 包含全局数据时按需指定：
-mini-agent import /path/to/my-project-global.magent --global
+npm run check
+npm test
+npm run format:check
+npm run format
 ```
 
-导入前会预览并要求确认；非交互脚本可显式使用 `--yes`。迁移文件使用 SHA-256 校验完整性，导入默认只创建不存在的数据文件，不覆盖已有文件。扩展目录旧授权不会直接生效，MCP 服务默认禁用，Windows 等旧系统绝对路径须重新核对。迁移包可能包含私密对话和文件输出，应妥善保管。
-
-## 当前限制
-
-- 不是安全沙箱；执行命令和外部 MCP 服务可能绕过应用层文件范围约束。
-- Tool Calling、Thinking 和上下文窗口元数据支持程度取决于供应商与具体型号。
-- Token 估算、摘要与记忆关键词匹配并不等同于精确 Token 计数、无损压缩或语义向量检索。
-- 执行日志可发现未完成操作，但不能保证崩溃后自动、安全地精确恢复所有副作用。
-- 项目提供跨平台代码与可迁移包，但真实 Windows/Linux/macOS 端到端兼容仍应分别验证。
-- 迁移包不包含项目源文件、依赖、API Key 或操作系统权限。
-
-## 验证
-
-```bash
-npm run check                  # TypeScript 类型检查
-npm test                       # 项目测试
-node --test tests/portable.test.mjs  # 迁移测试
-npm run demo                   # 模拟模型演示
-```
-
-这些命令用于本地验收；项目包含相关测试，但不代表当前所有平台和模型均已完成真实环境联调。
-
-## License
-
-当前项目未声明开源许可证；如需公开发布，应先选择并添加合适的许可证文件。
-
-
-## 安全维护说明（v1.0.1）
-
-- 迁移包导入前验证全部待写入文件，发现非法 MCP JSON 会阻止写入；提交失败尝试回滚已创建文件。**不保证进程崩溃或并发文件竞争下的强事务原子性**。
-- 导入时拒绝目标路径的符号链接，外部可写目录授权仅以待审阅文件保留，不会自动生效。
-- 导出时扫描常见明文 API Key 特征；检测到疑似密钥会拒绝导出。人工确认后可使用 `mini-agent export --allow-sensitive --out backup.magent`，但建议优先删除敏感数据，扫描也不能识别全部秘密。
-- 一个 MCP Server 无法连接不会阻断其他 Server；配置文件本身无效时禁用 MCP 并输出错误。
-- `run_command` 返回字段 `ok` 表示是否正常以退出码 0 结束；它仍然**不具备操作系统沙箱隔离**，经授权执行的命令可能修改工作区之外的文件。
-- Windows 路径根目录处理已调整；Windows/macOS 真机联调仍需进行。
+检查包含全部 TypeScript 源码、测试和工作区文件，以及 JavaScript 入口、迁移库和演示脚本的语法；启用了严格模式和未使用代码检查。测试包含核心、存储、权限、模型协议、迁移、运行时、HTTP/SSE、入口及无界面终端交互。在线模型和不同真实终端仍需按实际使用环境验证。

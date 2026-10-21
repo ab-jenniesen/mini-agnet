@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+.mini-agent/
+.agent-state/
+.agent-command-logs/
+.tmp/
+src/presentation/assets/

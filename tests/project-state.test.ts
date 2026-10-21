@@ -16,13 +16,21 @@ test('each launch folder has independent .mini-agent state', async () => {
     const a = await ProjectState.open(first);
     const b = await ProjectState.open(second);
     assert.notEqual(a.session('default'), b.session('default'));
-    assert.match(await readFile(a.path('PROJECT.md'),'utf8'), /Project Instructions/);
-    assert.match(await readFile(a.path('.gitignore'),'utf8'), /\*/);
+    assert.match(await readFile(a.path('PROJECT.md'), 'utf8'), /Project Instructions/);
+    assert.match(await readFile(a.path('.gitignore'), 'utf8'), /\*/);
     const ws = await Workspace.create(first);
     await ws.addDirectory(extra, false);
-    assert.deepEqual(JSON.parse(await readFile(a.path('workspace-grants.json'),'utf8')), [extra]);
-    assert.equal(await (await import('node:fs/promises')).stat(join(extra,'.mini-agent')).then(()=>true,()=>false),false);
+    assert.deepEqual(JSON.parse(await readFile(a.path('workspace-grants.json'), 'utf8')), [extra]);
+    assert.equal(
+      await (await import('node:fs/promises')).stat(join(extra, '.mini-agent')).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    );
     const secondWs = await Workspace.create(second);
     assert.equal(secondWs.listWritable().includes(extra), false);
-  } finally { await rm(base,{recursive:true,force:true}); }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });
