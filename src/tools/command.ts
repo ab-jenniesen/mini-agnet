@@ -91,7 +91,14 @@ export async function runCommand(
           windowsHide: true,
           stdio: 'ignore',
         });
-        killer.on('error', () => child.kill('SIGKILL'));
+        const fallback = () => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        };
+        killer.once('error', fallback);
+        // taskkill may launch successfully but exit with access denied or an unavailable PID.
+        killer.once('exit', (code) => {
+          if (code !== 0) fallback();
+        });
       } else {
         try {
           process.kill(-child.pid, 'SIGKILL');

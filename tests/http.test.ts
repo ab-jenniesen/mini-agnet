@@ -76,3 +76,27 @@ test('HTTP clients approve a tool through a separate request while run is in pro
     await f.close();
   }
 });
+
+test('a malformed event stream cancels its reader before rejecting initialization', async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = false;
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: invalid-json\n\n'));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+  const client = new HttpAgentClient('https://example.invalid', 'fake');
+  try {
+    await assert.rejects(client.initialize(), SyntaxError);
+    assert.equal(cancelled, true);
+  } finally {
+    await client.close();
+    globalThis.fetch = originalFetch;
+  }
+});

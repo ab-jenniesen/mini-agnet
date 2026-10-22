@@ -28,6 +28,17 @@ test('presentation keeps transcript types separate and preserves error order whi
       ['user', 'error', 'user'],
     );
     assert.equal(state.notice?.text, 'new');
+    const updated = reducePresentation(state, {
+      type: 'state',
+      state: {
+        ...f.runtime.snapshot(),
+        history: [...state.messages, { role: 'assistant', content: 'reply' }],
+      },
+    });
+    assert.deepEqual(
+      updated.conversation.map((entry) => entry.kind),
+      ['user', 'error', 'user', 'assistant'],
+    );
     const reset = reducePresentation(state, { type: 'state', state: f.runtime.snapshot() });
     assert.deepEqual(reset.conversation, []);
   } finally {

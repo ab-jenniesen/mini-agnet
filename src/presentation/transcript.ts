@@ -22,7 +22,7 @@ export type TranscriptEntry =
       artifactId?: string;
       durationMs?: number;
     }
-  | { kind: 'error'; text: string };
+  | { kind: 'error'; text: string; afterMessageCount?: number };
 
 export function preview(value: string, limit = 180): string {
   const text = value.replace(/\s+/g, ' ').trim();

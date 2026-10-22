@@ -182,9 +182,17 @@ export class AgentRuntime implements AgentClient {
           return capability;
         });
       case 'credentials.set':
-        return this.update(() =>
-          services.credentials.set(command.provider, command.key, command.persist),
-        );
+        return this.update(async () => {
+          await services.credentials.set(command.provider, command.key, command.persist);
+          if (command.provider === services.selection.provider) {
+            const model = services.createModel(
+              services.selection,
+              services.credentials.get(command.provider),
+            );
+            model.setMaxOutputTokens?.(services.capability.outputReserve);
+            services.agent.setModel(model);
+          }
+        });
       case 'permissions.set':
         return this.update(async () => services.permissions.setMode(command.mode));
       case 'workspace.status':

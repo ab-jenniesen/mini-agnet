@@ -92,6 +92,7 @@ export class HttpAgentClient implements AgentClient {
         }
       }
     } finally {
+      await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   }

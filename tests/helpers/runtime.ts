@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { AgentRuntime } from '../../src/app/runtime.js';
+import { AgentRuntime, type RuntimeOptions } from '../../src/app/runtime.js';
 import type { Model } from '../../src/core/types.js';
 
-export async function runtimeFixture(model: Model) {
+export async function runtimeFixture(model: Model, overrides: RuntimeOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'mini-runtime-'));
   const runtime = new AgentRuntime({
     root: directory,
@@ -21,6 +21,7 @@ export async function runtimeFixture(model: Model) {
         source: 'override',
       }),
     },
+    ...overrides,
   });
   return {
     runtime,

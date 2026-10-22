@@ -37,6 +37,46 @@ test('runtime initializes once, isolates subscribers, and persists typed message
   }
 });
 
+test('updating the active provider key rebuilds its model immediately without persisting the key in history', async () => {
+  const keys: Array<string | undefined> = [];
+  const reserves: number[] = [];
+  const f = await runtimeFixture(echoModel, {
+    dependencies: {
+      createModel: (_selection, key) => {
+        keys.push(key);
+        return {
+          setMaxOutputTokens: (tokens) => reserves.push(tokens),
+          async complete() {
+            if (key !== 'fake_replacement_key') throw new Error('Old credentials');
+            return { content: 'ready', toolCalls: [] };
+          },
+        };
+      },
+      resolveCapability: async () => ({
+        contextWindow: 32768,
+        outputReserve: 4096,
+        source: 'override',
+      }),
+    },
+  });
+  try {
+    const snapshot = await f.runtime.initialize();
+    await f.runtime.dispatch({
+      type: 'credentials.set',
+      provider: snapshot.selection.provider,
+      key: 'fake_replacement_key',
+      persist: false,
+    });
+    assert.equal(keys.length, 2);
+    assert.equal(keys.at(-1), 'fake_replacement_key');
+    assert.deepEqual(reserves, [4096, 4096]);
+    assert.equal(await f.runtime.dispatch({ type: 'run', input: 'go' }), 'ready');
+    assert.doesNotMatch(JSON.stringify(f.runtime.snapshot().history), /fake_replacement_key/);
+  } finally {
+    await f.close();
+  }
+});
+
 test('session switching and deletion preserve project memory and isolate session state', async () => {
   const f = await runtimeFixture(echoModel);
   try {

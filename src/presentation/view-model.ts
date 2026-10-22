@@ -37,7 +37,14 @@ function rebuild(state: PresentationState, messages: Message[]): TranscriptEntry
       ? { ...entry, durationMs: tools.get(entry.callId)!.durationMs }
       : entry,
   );
-  return [...entries, ...state.conversation.filter((entry) => entry.kind === 'error')];
+  let inserted = 0;
+  for (const entry of state.conversation) {
+    if (entry.kind !== 'error') continue;
+    const count = entry.afterMessageCount ?? messages.length;
+    const position = transcript(messages.slice(0, count), state.thinkingHistory).length;
+    entries.splice(position + inserted++, 0, entry);
+  }
+  return entries;
 }
 
 /** Pure state transitions, reusable by any renderer and testable without a terminal. */
@@ -106,7 +113,10 @@ export function reducePresentation(
         thinking: '',
         modelActivity: undefined,
         activeTool: undefined,
-        conversation: [...state.conversation, { kind: 'error', text: input.text }],
+        conversation: [
+          ...state.conversation,
+          { kind: 'error', text: input.text, afterMessageCount: state.messages.length },
+        ],
       };
     case 'approval_requested':
       return { ...state, approval: input.approval };
