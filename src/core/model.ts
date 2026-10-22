@@ -1,9 +1,12 @@
 import { readSseFrames } from './providers/sse.js';
+import { finishReason } from './completion.js';
 import type { Message, Model, ModelReply, Tool, Usage, ModelEvent } from './types.js';
 
 type Choice = {
+  finish_reason?: string | null;
   message?: {
     content?: string | null;
+    refusal?: string | null;
     tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
   };
 };
@@ -80,13 +83,17 @@ export class CompatibleChatModel implements Model {
         const message = parsed.choices?.[0]?.message;
         if (!message) throw new Error('Missing model response');
         return {
-          content: message.content ?? null,
+          content: message.content ?? message.refusal ?? null,
           toolCalls: (message.tool_calls ?? []).map((c) => ({
             id: c.id,
             name: c.function.name,
             arguments: c.function.arguments,
           })),
           usage: usageOf(parsed.usage),
+          finishReason: message.refusal
+            ? 'blocked'
+            : finishReason(parsed.choices?.[0]?.finish_reason, message.tool_calls?.length ?? 0),
+          rawFinishReason: parsed.choices?.[0]?.finish_reason ?? undefined,
         };
       }
       if (!response.body) throw new Error('Streaming response has no body');
@@ -94,6 +101,8 @@ export class CompatibleChatModel implements Model {
       let usage: Usage | undefined;
       const calls = new Map<number, { id: string; name: string; arguments: string }>();
       let ended = false;
+      let rawFinishReason: string | undefined;
+      let refused = false;
       const consume = (event: string) => {
         const data = event.trim();
         if (!data) return;
@@ -104,9 +113,12 @@ export class CompatibleChatModel implements Model {
         const chunk = JSON.parse(data) as {
           error?: unknown;
           choices?: Array<{
+            index?: number;
+            finish_reason?: string | null;
             delta?: {
               content?: string | null;
               reasoning_content?: string | null;
+              refusal?: string | null;
               tool_calls?: Array<{
                 index: number;
                 id?: string;
@@ -122,7 +134,14 @@ export class CompatibleChatModel implements Model {
           if (usage) options.onEvent?.({ type: 'usage', usage });
         }
         for (const choice of chunk.choices ?? []) {
+          if (choice.index !== undefined && choice.index !== 0) continue;
+          if (choice.finish_reason) rawFinishReason = choice.finish_reason;
           const delta = choice.delta;
+          if (delta?.refusal) {
+            refused = true;
+            content += delta.refusal;
+            options.onEvent?.({ type: 'text', text: delta.refusal });
+          }
           if (delta?.reasoning_content)
             options.onEvent?.({
               type: 'thinking',
@@ -151,6 +170,8 @@ export class CompatibleChatModel implements Model {
         content: content || null,
         toolCalls: [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c),
         usage,
+        finishReason: refused ? 'blocked' : finishReason(rawFinishReason, calls.size),
+        rawFinishReason,
       };
     } finally {
       clearTimeout(timeout);

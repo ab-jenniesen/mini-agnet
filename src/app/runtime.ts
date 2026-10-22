@@ -8,6 +8,8 @@ import { loadSession, saveSession } from '../infra/memory.js';
 import { ApprovalQueue } from './approvals.js';
 import { runtimeConfig, type RuntimeConfig } from './config.js';
 import { createServices, type RuntimeServices, type RuntimeDependencies } from './services.js';
+import { TaskRunner } from './task-runner.js';
+import { TaskExecutionError, type TaskResult } from './tasks.js';
 import type {
   AgentClient,
   Command,
@@ -24,12 +26,14 @@ export type RuntimeOptions = Partial<RuntimeConfig> & { dependencies?: RuntimeDe
 /** Application host. All interfaces use the same command and event contract. */
 export class AgentRuntime implements AgentClient {
   private readonly listeners = new Set<(event: RuntimeEvent) => void>();
-  private readonly approvals = new ApprovalQueue((event) => this.emit(event));
+  private readonly approvals = new ApprovalQueue((event) => {
+    this.runner?.approvalChanged(this.approvals.list().length > 0);
+    this.emit(event);
+  });
   private readonly config: RuntimeConfig;
   private services?: RuntimeServices;
   private startup?: Promise<RuntimeSnapshot>;
-  private activeRun?: Promise<string>;
-  private controller?: AbortController;
+  private runner?: TaskRunner;
   private changing = false;
   private updating?: Promise<unknown>;
   private closed = false;
@@ -68,16 +72,26 @@ export class AgentRuntime implements AgentClient {
       this.config,
       this.options.dependencies ?? {},
       (event) => {
+        this.runner?.observe(event);
         this.emit(event);
         if (event.type === 'agent' && event.event.type === 'tool_end') this.publishState();
       },
-      (view) => this.approvals.request(view, this.controller?.signal),
-      () => this.controller?.signal,
+      (view) => this.approvals.request(view, this.runner?.signal),
+      () => this.runner?.signal,
     );
     if (this.closed) {
       await this.services.close();
       throw new Error('Agent 运行时已关闭');
     }
+    this.runner = new TaskRunner(
+      this.services,
+      () => this.sessionId,
+      (event) => {
+        this.emit(event);
+        this.publishState();
+      },
+    );
+    await this.runner.restore();
     await saveSession(this.services.project.session(this.sessionId), this.services.agent.history);
     this.publishState();
     return this.snapshot();
@@ -90,7 +104,8 @@ export class AgentRuntime implements AgentClient {
   }
 
   private assertIdle(): void {
-    if (this.activeRun || this.changing) throw new Error('Agent 正在运行或更新配置，请稍后重试');
+    if (this.runner?.running || this.changing)
+      throw new Error('Agent 正在运行或更新配置，请稍后重试');
   }
 
   snapshot(): RuntimeSnapshot {
@@ -108,7 +123,8 @@ export class AgentRuntime implements AgentClient {
       permissionMode: services.permissions.getMode(),
       todos: services.todos.list(),
       metrics: services.agent.metrics,
-      running: !!this.activeRun,
+      running: !!this.runner?.running,
+      task: this.runner?.snapshot,
       pendingApprovals: this.approvals.list(),
     });
   }
@@ -126,7 +142,14 @@ export class AgentRuntime implements AgentClient {
     const services = this.ready();
     switch (command.type) {
       case 'run':
+        return this.run(command.input).then((result) => {
+          if (result.status !== 'completed') throw new TaskExecutionError(result);
+          return result.summary;
+        });
+      case 'tasks.run':
         return this.run(command.input);
+      case 'tasks.current':
+        return this.runner?.snapshot;
       case 'cancel':
         this.cancel();
         return;
@@ -143,6 +166,8 @@ export class AgentRuntime implements AgentClient {
           await services.todos.clear();
           await rm(services.project.path('compactions', `${this.sessionId}.json`), { force: true });
           await rm(services.project.path('journals', `${this.sessionId}.json`), { force: true });
+          await rm(services.project.path('tasks', `${this.sessionId}.json`), { force: true });
+          this.runner?.reset();
           services.interrupted = false;
         });
       case 'models.providers':
@@ -229,42 +254,15 @@ export class AgentRuntime implements AgentClient {
     return update;
   }
 
-  private run(input: string): Promise<string> {
-    const services = this.ready();
+  private run(input: string): Promise<TaskResult> {
     this.assertIdle();
     if (!input.trim() || input.length > this.config.maxInputChars)
       throw new Error(`输入长度必须为 1–${this.config.maxInputChars} 个字符`);
-    this.controller = new AbortController();
-    // Schedule the loop after assigning activeRun, so synchronous subscribers see running=true.
-    const task = Promise.resolve().then(() => services.agent.run(input));
-    const finished = this.finishRun(task, services);
-    this.activeRun = finished;
-    this.publishState();
-    return finished;
-  }
-
-  private async finishRun(task: Promise<string>, services: RuntimeServices): Promise<string> {
-    try {
-      const result = await task;
-      services.interrupted = false;
-      return result;
-    } catch (error) {
-      services.interrupted = true;
-      this.emit({ type: 'run_error', text: String(error) });
-      throw error;
-    } finally {
-      try {
-        await saveSession(services.project.session(this.sessionId), services.agent.history);
-      } finally {
-        this.controller = undefined;
-        this.activeRun = undefined;
-        this.publishState();
-      }
-    }
+    return this.runner!.run(input);
   }
 
   private cancel(): void {
-    this.controller?.abort(new Error('Task cancelled'));
+    this.runner?.cancel();
     this.approvals.cancelAll();
   }
 
@@ -295,6 +293,7 @@ export class AgentRuntime implements AgentClient {
     services.agent.history.splice(0, services.agent.history.length, ...history);
     services.agent.setContext(context);
     services.agent.setJournal(journal);
+    services.journal = journal;
     services.context = context;
     for (const name of ['todo_list', 'todo_add', 'todo_update']) services.registry.unregister(name);
     registerTodoTools(services.registry, todos);
@@ -302,6 +301,7 @@ export class AgentRuntime implements AgentClient {
     services.permissions.setAuditPath(services.project.path('approvals', `${id}.jsonl`));
     services.interrupted = !!previous && previous.status !== 'completed';
     this.sessionId = id;
+    await this.runner?.restore();
     return {
       id,
       history: this.snapshot().history,
@@ -368,7 +368,7 @@ export class AgentRuntime implements AgentClient {
     this.closed = true;
     this.cancel();
     await this.startup?.catch(() => {});
-    await this.activeRun?.catch(() => {});
+    await this.runner?.wait().catch(() => {});
     await this.updating?.catch(() => {});
     // Wait for run persistence and configuration updates before closing external tools.
     await this.services?.close();

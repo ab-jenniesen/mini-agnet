@@ -1,6 +1,7 @@
 import type { ApprovalView, RuntimeEvent, RuntimeSnapshot } from '../app/contracts.js';
 import type { Message } from '../core/types.js';
 import { transcript, preview, type ThinkingHistory, type TranscriptEntry } from './transcript.js';
+import { taskStatusText } from './task-status.js';
 
 export type Notice = { tone: 'info' | 'warning' | 'error'; text: string };
 export type PresentationState = {
@@ -53,6 +54,20 @@ export function reducePresentation(
   input: RuntimeEvent,
 ): PresentationState {
   switch (input.type) {
+    case 'task':
+      return {
+        ...state,
+        snapshot: state.snapshot ? { ...state.snapshot, task: input.task } : undefined,
+        notice: {
+          tone:
+            input.task.status === 'failed'
+              ? 'error'
+              : ['blocked', 'cancelled'].includes(input.task.status)
+                ? 'warning'
+                : 'info',
+          text: taskStatusText(input.task),
+        },
+      };
     case 'state': {
       const switched = state.snapshot?.id !== input.state.id;
       const reset = input.state.history.length < state.messages.length;

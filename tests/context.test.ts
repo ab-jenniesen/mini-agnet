@@ -70,3 +70,35 @@ test('refuses oversized current request', async () => {
     /Context overflow/,
   );
 });
+
+test('an incomplete summary is neither used nor saved, including raw provider end metadata', async () => {
+  for (const metadata of [{ finishReason: 'length' as const }, { rawFinishReason: 'max_tokens' }]) {
+    let saved = false;
+    const history: Message[] = [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'old '.repeat(700) },
+      { role: 'assistant', content: 'old response '.repeat(200) },
+      { role: 'user', content: 'new question' },
+    ];
+    const context = new ContextManager(
+      { maxInputTokens: 1200, reservedOutputTokens: 200, summarize: true, recentTurns: 1 },
+      undefined,
+      {
+        read: async () => undefined,
+        save: async () => {
+          saved = true;
+        },
+      },
+    );
+    const prepared = await context.prepare(history, {
+      complete: async () => ({ content: 'incomplete summary', toolCalls: [], ...metadata }),
+    });
+    assert.equal(saved, false);
+    assert.equal(prepared.report.summaryCreated, false);
+    assert.equal(
+      prepared.messages.some((message) => message.content?.includes('incomplete summary')),
+      false,
+    );
+    assert.equal(history.length, 4);
+  }
+});

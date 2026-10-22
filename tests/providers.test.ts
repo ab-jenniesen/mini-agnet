@@ -146,7 +146,10 @@ test('Gemini SSE streaming parses text and functionCall', async () => {
     { candidates: [{ content: { parts: [{ text: 'working' }] } }] },
     {
       candidates: [
-        { content: { parts: [{ functionCall: { name: 'echo', args: { text: 'hi' } } }] } },
+        {
+          finishReason: 'STOP',
+          content: { parts: [{ functionCall: { name: 'echo', args: { text: 'hi' } } }] },
+        },
       ],
       usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2 },
     },
@@ -176,7 +179,7 @@ test('Gemini separates thought summaries from visible answers', async () => {
   const old = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
-      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Planning steps', thought: true }, { text: 'Answer' }] } }] })}\n\n`,
+      `data: ${JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'Planning steps', thought: true }, { text: 'Answer' }] } }] })}\n\n`,
       { status: 200 },
     );
   const events: string[] = [];

@@ -160,6 +160,7 @@ export async function createServices(
     artifacts,
     memory,
     todos,
+    journal,
     agent,
     context,
     selection,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Message, Model, ModelEvent, ModelReply, Tool, Usage } from '../types.js';
 import { usage, requestSignal, sse } from './shared.js';
+import { finishReason } from '../completion.js';
 function geminiMessages(messages: Message[]) {
   const out: any[] = [];
   for (const m of messages) {
@@ -100,10 +101,15 @@ export class GeminiModel implements Model {
       const calls: { id: string; name: string; arguments: string }[] = [];
       const callPrefix = randomUUID();
       let index = 0;
+      let rawFinishReason: string | undefined;
+      let promptBlocked = false;
       const consume = (d: any) => {
         if (d.error) throw new Error('Gemini response error: ' + JSON.stringify(d.error));
-        if (d.promptFeedback?.blockReason)
-          throw new Error('Gemini request blocked: ' + d.promptFeedback.blockReason);
+        if (d.promptFeedback?.blockReason) {
+          promptBlocked = true;
+          rawFinishReason = d.promptFeedback.blockReason;
+        }
+        if (d.candidates?.[0]?.finishReason) rawFinishReason = d.candidates[0].finishReason;
         for (const part of d.candidates?.[0]?.content?.parts ?? []) {
           if (part.text) {
             if (part.thought === true)
@@ -131,9 +137,17 @@ export class GeminiModel implements Model {
       };
       if (options.onEvent) {
         for await (const e of sse(response)) consume(e.data);
+        if (!rawFinishReason && !promptBlocked)
+          throw new Error('Gemini stream terminated before finishReason');
       } else consume(await response.json());
       if (used) options.onEvent?.({ type: 'usage', usage: used });
-      return { content: text || null, toolCalls: calls, usage: used };
+      return {
+        content: text || null,
+        toolCalls: calls,
+        usage: used,
+        finishReason: promptBlocked ? 'blocked' : finishReason(rawFinishReason, calls.length),
+        rawFinishReason,
+      };
     } finally {
       r.cleanup();
     }

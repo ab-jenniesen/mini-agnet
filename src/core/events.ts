@@ -1,4 +1,4 @@
-import type { Usage } from './types.js';
+import type { ToolEvidence, Usage } from './types.js';
 
 /** Progress data contains no terminal markup or UI callbacks. */
 export type AgentEvent =
@@ -16,6 +16,8 @@ export type AgentEvent =
       result: string;
       ms: number;
       artifactId?: string;
+      evidence?: ToolEvidence[];
+      outcome?: 'success' | 'denied' | 'error';
     }
   | { type: 'usage'; usage: Usage }
   | { type: 'compact'; removedMessages: number }

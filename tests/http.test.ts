@@ -29,6 +29,10 @@ test('HTTP/SSE clients share the runtime without terminal imports, using validat
     });
     assert.equal(denied.status, 403);
     assert.ok(events.some((event) => event.type === 'message'));
+    const structured = await client.dispatch({ type: 'tasks.run', input: 'structured' });
+    assert.equal(structured.status, 'completed');
+    assert.equal(structured.verification.status, 'not_run');
+    assert.equal((await client.dispatch({ type: 'tasks.current' }))?.runId, structured.runId);
   } finally {
     await client.close();
     await server.close();

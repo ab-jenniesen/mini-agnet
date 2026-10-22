@@ -17,6 +17,7 @@ export class ProjectState {
     await mkdir(state.path('artifacts'), { recursive: true, mode: 0o700 });
     await mkdir(state.path('compactions'), { recursive: true, mode: 0o700 });
     await mkdir(state.path('journals'), { recursive: true, mode: 0o700 });
+    await mkdir(state.path('tasks'), { recursive: true, mode: 0o700 });
     await mkdir(state.path('todos'), { recursive: true, mode: 0o700 });
     await mkdir(state.path('approvals'), { recursive: true, mode: 0o700 });
     await ensureFile(state.path('.gitignore'), '*\n!.gitignore\n');
@@ -44,6 +45,7 @@ export class ProjectState {
       ['todos', '.json'],
       ['compactions', '.json'],
       ['journals', '.json'],
+      ['tasks', '.json'],
       ['approvals', '.jsonl'],
       ['sessions', '.json'],
     ] as const)

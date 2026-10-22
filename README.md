@@ -4,6 +4,8 @@
 
 界面通过 `AgentClient` 发送结构化命令、订阅事件。Agent 核心负责模型调用与工具执行，应用运行时负责会话、配置、审批和持久化。接入 Web、桌面或 App 时，可以复用这套接口。学习代码建议从 [ARCHITECTURE.md](./ARCHITECTURE.md) 开始。
 
+当前版本 **1.1.0**：增加任务状态、模型结束原因、结构化执行结果和验证记录。版本变化见 [CHANGELOG.md](./CHANGELOG.md)。
+
 ## 环境与启动
 
 - Node.js **22.19.0 或更高版本**，以及 npm。
@@ -100,28 +102,50 @@ TUI 使用 [Pi TUI](https://github.com/earendil-works/pi/tree/main/packages/tui)
 
 ## 斜杠命令
 
-| 命令                                  | 用途                                 |
-| ------------------------------------- | ------------------------------------ |
-| `/help`                               | 按类型、命令、内容、示例纵向显示帮助 |
-| `/model`、`/models`                   | 选择供应商和模型                     |
-| `/model <provider> [model-id]`        | 选择指定供应商或模型                 |
-| `/refresh-models`                     | 重新获取当前供应商的模型列表         |
-| `/key <provider>`                     | 配置密钥                             |
-| `/session`                            | 列出会话                             |
-| `/session <id>`                       | 切换或创建会话                       |
-| `/session delete <id>`                | 确认后删除会话及其专属数据           |
-| `/reset`                              | 清空当前对话和 Todo，保留长期记忆    |
-| `/permission [read-only\|ask\|allow]` | 查看或切换权限                       |
-| `/dirs`、`/addDir <path>`             | 查看可写目录或申请目录授权           |
-| `/thinking [on\|collapse\|off]`       | 控制思考显示                         |
-| `/todos`、`/stats`、`/tools`          | 查看任务、统计和工具                 |
-| `/memories [project\|global]`         | 查看长期记忆                         |
-| `/outputs`                            | 查看当前会话引用的归档输出           |
-| `/output <id> [offset]`               | 按字符偏移分页查看归档输出           |
-| `/close-output`                       | 关闭输出面板，也可按 Esc             |
-| `/exit`                               | 退出                                 |
+| 命令                                  | 用途                                           |
+| ------------------------------------- | ---------------------------------------------- |
+| `/help`                               | 按类型、命令、内容、示例纵向显示帮助           |
+| `/model`、`/models`                   | 选择供应商和模型                               |
+| `/model <provider> [model-id]`        | 选择指定供应商或模型                           |
+| `/refresh-models`                     | 重新获取当前供应商的模型列表                   |
+| `/key <provider>`                     | 配置密钥                                       |
+| `/session`                            | 列出会话                                       |
+| `/session <id>`                       | 切换或创建会话                                 |
+| `/session delete <id>`                | 确认后删除会话及其专属数据                     |
+| `/reset`                              | 清空当前对话和 Todo，保留长期记忆              |
+| `/permission [read-only\|ask\|allow]` | 查看或切换权限                                 |
+| `/dirs`、`/addDir <path>`             | 查看可写目录或申请目录授权                     |
+| `/thinking [on\|collapse\|off]`       | 控制思考显示                                   |
+| `/todos`、`/stats`、`/tools`          | 查看任务、统计和工具                           |
+| `/task`                               | 查看本轮任务状态、结束原因、文件修改和检查结果 |
+| `/memories [project\|global]`         | 查看长期记忆                                   |
+| `/outputs`                            | 查看当前会话引用的归档输出                     |
+| `/output <id> [offset]`               | 按字符偏移分页查看归档输出                     |
+| `/close-output`                       | 关闭输出面板，也可按 Esc                       |
+| `/exit`                               | 退出                                           |
 
 会话 ID 是 1–64 位英文字母、数字、下划线或连字符。删除当前会话后自动切换；长期记忆和共享工具输出归档保留。经典 CLI 复用相同命令路由，以普通文本显示结果；`/model` 列出选项后通过完整命令选择，思考面板显示模式属于 TUI 功能。
+
+## V1.1：任务状态与执行结果
+
+每次发送消息创建一个独立任务，任务属于当前会话，并有自己的 `runId`。底部提示原位更新任务状态，`/task` 打开详细报告。
+
+| 状态               | 含义                                                       |
+| ------------------ | ---------------------------------------------------------- |
+| `running`          | 正在请求模型或执行工具                                     |
+| `waiting_approval` | 等待用户授权工具                                           |
+| `completed`        | 模型正常返回最终回复，且没有未解决的授权拒绝或当前失败检查 |
+| `failed`           | 请求或执行异常、输出截断、空回复、检查失败或保存失败       |
+| `cancelled`        | 用户取消了本轮任务                                         |
+| `blocked`          | 模型拒绝、服务商暂停生成，或工具未获授权                   |
+
+模型适配器保留原始结束原因，并统一为 `stop`、`tool_calls`、`length`、`blocked`、`pause`、`error`、`unknown`。输出被截断、拒绝或暂停时，已收到的正文会保留并标记未完成，相关工具调用不会执行；断流保留已收到的正文。兼容服务未提供结束原因时记录 `unknown`，有有效正文的最终回复仍可结束任务。暂停状态目前需要用户再次发起请求。
+
+执行结果包含回复摘要、工具提供的文件修改记录、命令退出码和日志位置、验证状态、已记录的未完成事项，以及本轮调用次数和 Token 用量。内置 `write_file` 提供文件记录；任意命令或 MCP 的全部文件副作用目前不能自动枚举，扩展工具需要实现 `Tool.evidence`。
+
+**验证状态单独记录**：没有运行检查时为 `not_run`；只有实际执行、标记 `purpose: 'verification'` 的命令才计入验证。模型声称“检查通过”不会产生验证记录。同一命令以最后一次结果为准；检查后再次写文件，会使旧检查失去当前有效性，需要重新检查。仅在用户要求或授权时运行检查，且检查通过只表示这些命令通过，不代表任务语义已得到完整验收。
+
+每个会话最后一条任务结果保存在 `.mini-agent/tasks/<session-id>.json`，切换会话或重启后可查看。重置或删除会话时同步删除。执行日志能提示异常中断；当前没有任务断点续跑，也不会自动重放写入操作。
 
 ## 多端接入
 
@@ -135,6 +159,18 @@ close()               释放当前客户端或宿主资源
 ```
 
 TUI 和经典 CLI 使用进程内 `AgentRuntime`；浏览器或桌面前端可以使用 `HttpAgentClient`，也可以基于相同协议实现 IPC/WebSocket 适配器。
+
+新客户端使用结构化任务接口：
+
+```ts
+const result = await client.dispatch({ type: 'tasks.run', input: '分析当前项目' });
+console.log(result.status, result.summary, result.verification.status);
+
+const task = await client.dispatch({ type: 'tasks.current' });
+// subscribe() 中的 task 事件提供运行、审批和结束状态；快照也包含 task。
+```
+
+`tasks.run` 对执行失败、受阻或取消返回对应的 `TaskResult`；输入不合法或已有任务运行时仍拒绝请求。旧的 `run` 命令继续返回回复字符串，失败时拒绝 Promise。UI 仅消费这些数据，不参与模型循环和完成状态判定。
 
 HTTP 后端提供：
 
@@ -153,7 +189,7 @@ HTTP 后端提供：
 - 文件工具支持目录浏览、分页读取、SHA-256 校验及写入。覆盖已有文件前必须读取并提交 `expectedSha256`；外部修改会产生冲突。
 - `read-only` 拒绝写入、命令和外部 MCP 调用；`ask` 在写入前审批；`allow` 自动允许已授权目录内的内置写入。命令、额外目录和 MCP 调用仍需确认。
 - Agent 可以管理 Todo、搜索会话、读写项目/全局长期记忆，并按需读取归档工具输出。
-- 每次任务不设固定模型调用轮数上限：模型返回工具调用时继续执行，返回不含工具调用的最终回复时结束；用户取消或执行报错也会停止。原有 `AGENT_MAX_STEPS` 配置已移除。
+- 每次任务不设固定模型调用轮数上限：模型返回有效工具调用时继续执行，正常返回不含工具调用的最终回复时结束；用户取消、模型异常结束或执行报错也会停止。原有 `AGENT_MAX_STEPS` 配置已移除。
 - 上下文窗口默认 **128k（131,072 Token）**，包含输入、工具定义和输出预留；默认预留 8,192 Token 输出及 8% 安全余量，因此可用输入预算小于 128k。可以召回记忆、裁剪工具结果，并在达到可用输入预算的 80% 时压缩完整旧轮次；当前轮次仍超出预算时会报错，原始历史保存在磁盘。模型实际容量较小时，使用 `AGENT_CONTEXT_WINDOW_OVERRIDE` 调低窗口。
 - Settings、Skills 和 stdio MCP 支持全局及项目配置，项目配置优先。
 
@@ -161,7 +197,7 @@ HTTP 后端提供：
 
 ## 配置与 Git
 
-主工作区的 `.mini-agent/` 保存项目指令、配置、会话、记忆、Todo、压缩摘要、审批、执行日志和工具输出。用户级配置位于 `~/.config/mini-agent/`，保存凭据、模型选择、全局记忆、Settings、Skills 和 MCP 配置。
+主工作区的 `.mini-agent/` 保存项目指令、配置、会话、记忆、Todo、压缩摘要、审批、执行日志、任务结果和工具输出。用户级配置位于 `~/.config/mini-agent/`，保存凭据、模型选择、全局记忆、Settings、Skills 和 MCP 配置。
 
 应提交源码、测试、文档、`package.json`、`package-lock.json`、`.env.example`、格式配置和启动图案。真实 `.env`、`.mini-agent/`、`.agent-state/`、`.agent-command-logs/`、`node_modules/`、`.tmp/` 和构建输出保留在本地。
 

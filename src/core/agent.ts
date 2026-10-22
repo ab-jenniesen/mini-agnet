@@ -3,6 +3,13 @@ import type { AgentMetrics, Message, Model, ModelReply, Tool, ToolCall, Usage } 
 import type { AgentEvent } from './events.js';
 import type { ArtifactPort, ContextPort, JournalPort } from './ports.js';
 import { ToolRegistry } from './registry.js';
+import { finishReason, ModelCompletionError, type ModelFinishReason } from './completion.js';
+
+export type AgentRunResult = {
+  content: string;
+  finishReason: ModelFinishReason;
+  rawFinishReason?: string;
+};
 
 export type { AgentEvent } from './events.js';
 export type { ArtifactPort, ContextPort, JournalPort } from './ports.js';
@@ -65,6 +72,10 @@ export class Agent {
   }
 
   async run(input: string): Promise<string> {
+    return (await this.runDetailed(input)).content;
+  }
+
+  async runDetailed(input: string, runId: string = randomUUID()): Promise<AgentRunResult> {
     if (this.running) throw new Error('Agent is already running');
     if (!input.trim()) throw new Error('Input must not be empty');
     this.running = true;
@@ -94,7 +105,7 @@ export class Agent {
     };
     try {
       this.options.signal?.throwIfAborted();
-      await this.options.journal?.begin(randomUUID());
+      await this.options.journal?.begin(runId);
       this.append({ role: 'user', content: input });
       // Continue until the model returns a final reply without tool calls.
       for (let step = 1; ; step++) {
@@ -126,34 +137,46 @@ export class Agent {
         this.options.signal?.throwIfAborted();
 
         const calls = reply.toolCalls;
-        const usage = calls.length
-          ? reply.usage
-          : turnUsage && missingUsage
-            ? { ...turnUsage, partial: true }
-            : turnUsage;
-        const content = calls.length ? reply.content : (reply.content ?? '(模型未返回文本)');
-        this.append({
-          role: 'assistant',
-          content,
-          thinkingMs,
-          ...(calls.length
-            ? {
-                tool_calls: calls.map((call) => ({
-                  id: call.id,
-                  type: 'function' as const,
-                  function: { name: call.name, arguments: call.arguments },
-                })),
-              }
-            : {}),
-          ...(usage ? { usage } : {}),
-        });
+        const reason = reply.finishReason ?? finishReason(reply.rawFinishReason, calls.length);
+        const incomplete = ['length', 'blocked', 'pause', 'error'].includes(reason);
+        const usage =
+          calls.length && !incomplete
+            ? reply.usage
+            : turnUsage && missingUsage
+              ? { ...turnUsage, partial: true }
+              : turnUsage;
+        const content = reply.content;
+        // Preserve partial text for inspection, but never execute a truncated or blocked tool call.
+        if (content?.trim() || (calls.length && !incomplete))
+          this.append({
+            role: 'assistant',
+            content,
+            thinkingMs,
+            finishReason: reason,
+            ...(reply.rawFinishReason ? { rawFinishReason: reply.rawFinishReason } : {}),
+            ...(calls.length && !incomplete
+              ? {
+                  tool_calls: calls.map((call) => ({
+                    id: call.id,
+                    type: 'function' as const,
+                    function: { name: call.name, arguments: call.arguments },
+                  })),
+                }
+              : {}),
+            ...(usage ? { usage } : {}),
+          });
+        this.assertReply(reason, reply);
         this.options.onEvent?.('model', { step, content, calls: calls.map((call) => call.name) });
         if (calls.length && content) {
           this.options.onProgress?.({ type: 'assistant_message', content, usage: reply.usage });
         }
         if (!calls.length) {
           await this.options.journal?.finish('completed');
-          return content!;
+          return {
+            content: content!,
+            finishReason: reason,
+            rawFinishReason: reply.rawFinishReason,
+          };
         }
         for (const call of calls) await this.executeTool(call);
         this.options.signal?.throwIfAborted();
@@ -169,6 +192,32 @@ export class Agent {
     }
   }
 
+  private assertReply(reason: ModelFinishReason, reply: ModelReply): void {
+    const failure = (code: ModelCompletionError['code'], message: string): never => {
+      throw new ModelCompletionError(code, message, reason, reply.rawFinishReason);
+    };
+    switch (reason) {
+      case 'length':
+        failure('output_truncated', '模型输出达到长度上限，回复被截断，任务尚未完成');
+        break;
+      case 'blocked':
+        failure('model_blocked', '模型拒绝或过滤了本次回复，任务受阻');
+        break;
+      case 'pause':
+        failure('model_paused', '服务商暂停了生成，需要继续处理，任务尚未完成');
+        break;
+      case 'error':
+        failure('invalid_response', '服务商返回了异常结束状态');
+        break;
+      case 'tool_calls':
+        if (!reply.toolCalls.length)
+          failure('invalid_response', '模型声明工具调用但没有返回调用参数');
+        break;
+    }
+    if (!reply.toolCalls.length && !reply.content?.trim())
+      failure('empty_response', '模型未返回正文或工具调用，任务尚未完成');
+  }
+
   /** Stop at first answer text; tool-only/nonstreaming replies stop at completion. Tools are excluded. */
   private async requestModel(
     model: Model,
@@ -177,6 +226,7 @@ export class Agent {
   ): Promise<{ reply: ModelReply; thinkingMs: number }> {
     const started = performance.now();
     let thinkingMs: number | undefined;
+    let partial = '';
     const finishThinking = (): number => {
       if (thinkingMs === undefined) {
         thinkingMs = performance.now() - started;
@@ -185,16 +235,28 @@ export class Agent {
       return thinkingMs;
     };
     this.options.onProgress?.({ type: 'model_start', startedAt: Date.now() });
-    const reply = await model.complete(messages, tools, {
-      signal: this.options.signal,
-      onEvent: this.options.onProgress
-        ? (event) => {
-            if (event.type === 'text' && event.text) finishThinking();
-            this.options.onProgress?.(event);
+    try {
+      const reply = await model.complete(messages, tools, {
+        signal: this.options.signal,
+        onEvent: (event) => {
+          if (event.type === 'text' && event.text) {
+            partial += event.text;
+            finishThinking();
           }
-        : undefined,
-    });
-    return { reply, thinkingMs: finishThinking() };
+          this.options.onProgress?.(event);
+        },
+      });
+      return { reply, thinkingMs: finishThinking() };
+    } catch (error) {
+      if (partial.trim())
+        this.append({
+          role: 'assistant',
+          content: partial,
+          finishReason: 'error',
+          thinkingMs: thinkingMs ?? performance.now() - started,
+        });
+      throw error;
+    }
   }
 
   private async executeTool(call: ToolCall): Promise<void> {
@@ -208,37 +270,44 @@ export class Agent {
     this.options.onProgress?.({ type: 'tool_start', callId: call.id, name: call.name, args });
     await this.options.journal?.startTool(call.id, call.name);
     const start = performance.now();
-    const result = await this.tools.invoke(
+    const execution = await this.tools.invokeDetailed(
       call.name,
       args,
       this.options.approve ?? (async () => false),
       call.id,
       this.options.signal,
     );
+    const result = execution.output;
     const ms = performance.now() - start;
     this.metrics.toolCalls++;
     this.metrics.toolMs += ms;
     const inline = this.options.maxInlineToolChars ?? 12000;
     let toolText = result;
     let artifactId: string | undefined;
-    if (result.length > inline) {
-      if (this.options.artifacts) {
-        const saved = await this.options.artifacts.save(result);
-        artifactId = saved.id;
-        toolText = `[ARCHIVED id=${saved.id} totalChars=${saved.length}; use read_tool_output(id, offset, limit)]\n${result.slice(0, inline)}`;
-      } else toolText = `${result.slice(0, inline)}\n[TRUNCATED: artifact store not configured]`;
+    try {
+      if (result.length > inline) {
+        if (this.options.artifacts) {
+          const saved = await this.options.artifacts.save(result);
+          artifactId = saved.id;
+          toolText = `[ARCHIVED id=${saved.id} totalChars=${saved.length}; use read_tool_output(id, offset, limit)]\n${result.slice(0, inline)}`;
+        } else toolText = `${result.slice(0, inline)}\n[TRUNCATED: artifact store not configured]`;
+      }
+      this.append({ role: 'tool', tool_call_id: call.id, content: toolText });
+      this.options.onEvent?.('tool', { name: call.name, args, result: result.slice(0, 300) });
+    } finally {
+      // Execution already happened: archival or journal failures must not hide its effects.
+      this.options.onProgress?.({
+        type: 'tool_end',
+        callId: call.id,
+        name: call.name,
+        result: result.slice(0, 300),
+        ms,
+        artifactId,
+        evidence: execution.evidence,
+        outcome: execution.status,
+      });
     }
-    this.append({ role: 'tool', tool_call_id: call.id, content: toolText });
-    this.options.onEvent?.('tool', { name: call.name, args, result: result.slice(0, 300) });
     await this.options.journal?.finishTool(call.id, toolText);
-    this.options.onProgress?.({
-      type: 'tool_end',
-      callId: call.id,
-      name: call.name,
-      result: result.slice(0, 300),
-      ms,
-      artifactId,
-    });
   }
 
   private completePendingToolResults(): void {

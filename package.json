@@ -1,6 +1,6 @@
 {
   "name": "mini-agent",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,8 +14,8 @@
     "check": "tsc --noEmit && node --check bin/mini-agent.mjs && node --check lib/portable.mjs && node --check scripts/offline-demo.mjs",
     "dev:classic": "tsx src/cli.ts",
     "link:global": "npm link",
-    "format": "prettier --write src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md",
-    "format:check": "prettier --check src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md"
+    "format": "prettier --write src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md CHANGELOG.md",
+    "format:check": "prettier --check src tests lib bin scripts workspace package.json tsconfig.json README.md ARCHITECTURE.md CHANGELOG.md"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "1.3.0",

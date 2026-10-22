@@ -179,6 +179,11 @@ export function registerCommandTools(registry: ToolRegistry, workspace: Workspac
         args: { type: 'array', items: { type: 'string' } },
         cwd: { type: 'string' },
         timeoutMs: { type: 'integer' },
+        purpose: {
+          type: 'string',
+          enum: ['task', 'verification'],
+          description: 'Use verification only for checks requested by the user.',
+        },
       },
       required: ['command', 'args'],
       additionalProperties: false,
@@ -189,6 +194,7 @@ export function registerCommandTools(registry: ToolRegistry, workspace: Workspac
         args: z.array(z.string().max(300)).max(30),
         cwd: z.string().default('.'),
         timeoutMs: z.number().int().min(1000).max(60_000).default(20_000),
+        purpose: z.enum(['task', 'verification']).default('task'),
       })
       .strict(),
     execute: async ({ command, args, cwd, timeoutMs }, context) =>
@@ -200,5 +206,28 @@ export function registerCommandTools(registry: ToolRegistry, workspace: Workspac
         timeoutMs as number,
         context?.signal,
       ),
+    evidence: (args, result) => {
+      const actual = JSON.parse(String(result)) as {
+        ok: boolean;
+        exitCode: number | null;
+        timedOut: boolean;
+        cancelled: boolean;
+        logPath: string;
+      };
+      return [
+        {
+          kind: 'command',
+          command: String(args.command),
+          args: args.args as string[],
+          cwd: String(args.cwd),
+          purpose: args.purpose as 'task' | 'verification',
+          ok: actual.ok,
+          exitCode: actual.exitCode,
+          timedOut: actual.timedOut,
+          cancelled: actual.cancelled,
+          logPath: actual.logPath,
+        },
+      ];
+    },
   });
 }

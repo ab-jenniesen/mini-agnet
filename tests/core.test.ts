@@ -7,6 +7,7 @@ import { Workspace } from '../src/infra/files.js';
 import { ToolRegistry } from '../src/core/registry.js';
 import { Agent } from '../src/core/agent.js';
 import type { Model } from '../src/core/types.js';
+import type { AgentEvent } from '../src/core/events.js';
 import { registerLocalTools } from '../src/tools/local.js';
 
 test('workspace denies path traversal and symlink', async () => {
@@ -61,4 +62,85 @@ test('agent keeps tool calls and results in valid order', async () => {
     agent.history.map((m) => m.role),
     ['system', 'user', 'assistant', 'tool', 'assistant'],
   );
+});
+
+test('agent continues beyond fifteen model steps until a final reply arrives', async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    name: 'ping',
+    description: 'ping',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => 'pong',
+  });
+  let calls = 0;
+  const agent = new Agent(
+    {
+      async complete() {
+        calls++;
+        return calls <= 20
+          ? { content: null, toolCalls: [{ id: `call-${calls}`, name: 'ping', arguments: '{}' }] }
+          : { content: 'done', toolCalls: [] };
+      },
+    },
+    registry,
+    'system',
+  );
+  assert.equal(await agent.run('continue'), 'done');
+  assert.equal(calls, 21);
+  assert.equal(agent.metrics.toolCalls, 20);
+});
+
+test('headless core retains a broken stream without a progress subscriber', async () => {
+  const agent = new Agent(
+    {
+      async complete(_messages, _tools, options) {
+        options?.onEvent?.({ type: 'text', text: 'partial answer' });
+        throw new Error('stream disconnected');
+      },
+    },
+    new ToolRegistry(),
+    'system',
+  );
+  await assert.rejects(agent.run('go'), /stream disconnected/);
+  const partial = agent.history.at(-1);
+  assert.equal(partial?.content, 'partial answer');
+  if (partial?.role === 'assistant') assert.equal(partial.finishReason, 'error');
+});
+
+test('actual tool effects remain observable if result archival fails', async () => {
+  const registry = new ToolRegistry();
+  registry.register({
+    name: 'write',
+    description: 'write',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => 'long result',
+    evidence: () => [{ kind: 'file_change', path: 'changed.txt' }],
+  });
+  const events: AgentEvent[] = [];
+  const agent = new Agent(
+    {
+      async complete() {
+        return { content: null, toolCalls: [{ id: '1', name: 'write', arguments: '{}' }] };
+      },
+    },
+    registry,
+    'system',
+    {
+      maxInlineToolChars: 1,
+      artifacts: {
+        save: async () => {
+          throw new Error('disk full');
+        },
+      },
+      onProgress: (event) => events.push(event),
+    },
+  );
+  await assert.rejects(agent.run('go'), /disk full/);
+  const completed = events.find((event) => event.type === 'tool_end');
+  assert.equal(completed?.type, 'tool_end');
+  if (completed?.type === 'tool_end') {
+    assert.equal(completed.outcome, 'success');
+    assert.deepEqual(completed.evidence, [{ kind: 'file_change', path: 'changed.txt' }]);
+  }
+  assert.equal(agent.history.at(-1)?.role, 'tool');
 });

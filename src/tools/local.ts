@@ -94,6 +94,7 @@ export function registerLocalTools(registry: ToolRegistry, workspace: Workspace)
 
   registry.register({
     name: 'write_file',
+    evidence: (args) => [{ kind: 'file_change', path: String(args.path) }],
     description:
       'Overwrite a UTF-8 file in an explicitly writable directory; existing files require expectedSha256.',
     write: true,

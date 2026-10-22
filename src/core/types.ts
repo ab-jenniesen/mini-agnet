@@ -1,3 +1,5 @@
+import type { ModelFinishReason } from './completion.js';
+
 export type JsonSchema = {
   type: 'object';
   properties: Record<string, unknown>;
@@ -18,6 +20,8 @@ export type Message =
       usage?: Usage;
       /** Request start to first answer text, or reply completion for tool-only/nonstreaming replies. */
       thinkingMs?: number;
+      finishReason?: ModelFinishReason;
+      rawFinishReason?: string;
     }
   | { role: 'tool'; tool_call_id: string; content: string };
 export type Tool = {
@@ -26,6 +30,29 @@ export type Tool = {
   parameters: JsonSchema;
   execute: (args: Record<string, unknown>, context?: { signal?: AbortSignal }) => Promise<unknown>;
   write?: boolean;
+  /** Derive bounded, factual evidence from a successfully executed tool's actual return value. */
+  evidence?: (args: Record<string, unknown>, result: unknown) => ToolEvidence[];
+};
+
+export type ToolEvidence =
+  | { kind: 'file_change'; path: string }
+  | {
+      kind: 'command';
+      command: string;
+      args: string[];
+      cwd: string;
+      purpose: 'task' | 'verification';
+      ok: boolean;
+      exitCode: number | null;
+      timedOut: boolean;
+      cancelled: boolean;
+      logPath: string;
+    };
+
+export type ToolExecution = {
+  output: string;
+  status: 'success' | 'denied' | 'error';
+  evidence: ToolEvidence[];
 };
 export type Usage = {
   promptTokens: number;
@@ -45,7 +72,13 @@ export type AgentMetrics = {
   toolMs: number;
   lastRunMs: number;
 };
-export type ModelReply = { content: string | null; toolCalls: ToolCall[]; usage?: Usage };
+export type ModelReply = {
+  content: string | null;
+  toolCalls: ToolCall[];
+  usage?: Usage;
+  finishReason?: ModelFinishReason;
+  rawFinishReason?: string;
+};
 export type ModelEvent =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string; source: 'provider' | 'summary' }

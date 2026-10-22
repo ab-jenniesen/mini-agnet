@@ -1,5 +1,6 @@
 import type { Message, Model } from '../types.js';
 import type { Tool } from '../types.js';
+import { finishReason } from '../completion.js';
 import type { ContextCapability } from './capabilities.js';
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_OUTPUT_RESERVE } from './defaults.js';
 
@@ -212,7 +213,12 @@ export class ContextManager {
             [],
             { signal },
           );
-          if (reply.content) {
+          if (
+            reply.content &&
+            !['length', 'blocked', 'pause', 'error'].includes(
+              reply.finishReason ?? finishReason(reply.rawFinishReason, reply.toolCalls.length),
+            )
+          ) {
             summaryText = truncateByTokens(reply.content, 1200);
             unsummarized = [];
             const previous = copy.findIndex(

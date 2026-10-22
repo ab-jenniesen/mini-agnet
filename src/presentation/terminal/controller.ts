@@ -59,6 +59,7 @@ export class TerminalController {
     this.state = reducePresentation(this.state, event);
     if (
       event.type === 'notice' ||
+      event.type === 'task' ||
       (event.type === 'agent' &&
         (event.event.type === 'context' || event.event.type === 'thinking'))
     )
@@ -138,7 +139,7 @@ export class TerminalController {
           }
           break;
         case 'run':
-          await this.client.dispatch({ type: 'run', input: effect.input });
+          await this.client.dispatch({ type: 'tasks.run', input: effect.input });
           break;
       }
     } catch (error) {

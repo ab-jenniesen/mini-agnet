@@ -1,5 +1,6 @@
 import type { Message, Model, ModelEvent, ModelReply, Tool, Usage } from '../types.js';
 import { usage, requestSignal, sse } from './shared.js';
+import { finishReason } from '../completion.js';
 function anthroMessages(messages: Message[]) {
   const out: Array<{ role: 'user' | 'assistant'; content: any }> = [];
   for (const m of messages) {
@@ -96,14 +97,22 @@ export class AnthropicModel implements Model {
             .filter((x: any) => x.type === 'tool_use')
             .map((x: any) => ({ id: x.id, name: x.name, arguments: JSON.stringify(x.input) })),
           usage: data.usage ? usage(data.usage.input_tokens, data.usage.output_tokens) : undefined,
+          finishReason: finishReason(
+            data.stop_reason,
+            content.filter((x: any) => x.type === 'tool_use').length,
+          ),
+          rawFinishReason: data.stop_reason ?? undefined,
         };
       }
       let text = '';
       const calls = new Map<number, { id: string; name: string; arguments: string }>();
       let used: Usage | undefined;
       let ended = false;
+      let rawFinishReason: string | undefined;
       for await (const e of sse(response)) {
         const d = e.data;
+        if (e.event === 'message_delta' && d.delta?.stop_reason)
+          rawFinishReason = d.delta.stop_reason;
         if (e.event === 'message_stop') {
           ended = true;
           break;
@@ -133,6 +142,8 @@ export class AnthropicModel implements Model {
         content: text || null,
         toolCalls: [...calls.values()].map((c) => ({ ...c, arguments: c.arguments || '{}' })),
         usage: used,
+        finishReason: finishReason(rawFinishReason, calls.size),
+        rawFinishReason,
       };
     } finally {
       r.cleanup();

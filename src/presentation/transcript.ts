@@ -1,4 +1,5 @@
 import type { Message, Usage } from '../core/types.js';
+import type { ModelFinishReason } from '../core/completion.js';
 
 /** Public provider thinking stays in client memory, separate from canonical messages. */
 export type ThinkingHistory = Readonly<Record<number, string>>;
@@ -12,6 +13,7 @@ export type TranscriptEntry =
       usage?: Usage;
       usageScope: 'call' | 'turn';
       thinkingMs?: number;
+      finishReason?: ModelFinishReason;
     }
   | {
       kind: 'tool';
@@ -55,6 +57,7 @@ export function transcript(
           usage: message.usage,
           usageScope: message.tool_calls?.length ? 'call' : 'turn',
           thinkingMs: message.tool_calls?.length ? message.thinkingMs : turnThinkingMs,
+          finishReason: message.finishReason,
         });
       for (const call of message.tool_calls ?? [])
         calls.set(call.id, {

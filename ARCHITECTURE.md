@@ -10,7 +10,8 @@ flowchart TD
   W[Web / 桌面 / App] --> H[HTTP / SSE 适配器]
   H --> C
   C --> R[AgentRuntime 应用运行时]
-  R --> A[Agent 模型与工具循环]
+  R --> K[TaskRunner 任务生命周期]
+  K --> A[Agent 模型与工具循环]
   R --> S[会话 / 配置 / 审批队列]
   A --> M[Model 接口与供应商适配]
   A --> G[ToolRegistry]
@@ -34,10 +35,10 @@ flowchart TD
 ## 2. 按这个顺序阅读
 
 1. **`src/core/types.ts`**：认识 `Message`、`Model`、`Tool` 和 `Usage`。
-2. **`src/core/agent.ts`**：阅读 `run()`，理解模型与工具的循环。
+2. **`src/core/agent.ts`**：阅读 `runDetailed()`，理解模型与工具的循环，以及异常回复为何不能执行工具。
 3. **`src/core/registry.ts`**：理解参数校验、权限检查和工具结果。
 4. **`src/app/contracts.ts`**：理解一个客户端能发什么命令、收到什么事件。
-5. **`src/app/runtime.ts`**：理解生命周期、会话切换和动作派发。
+5. **`src/app/runtime.ts`**：理解服务装配、会话切换和动作派发；再读 `tasks.ts` 与 `task-runner.ts` 理解任务状态、结果和验证证据。
 6. **`src/app/services.ts`**：查看运行时如何组装实际模型、工具和存储。
 7. **`src/presentation/view-model.ts`**：学习纯函数如何把事件转换成界面状态。
 8. **`src/presentation/terminal/controller.ts` 与 `view.ts`**：分别看交互协调和 Pi TUI 布局。
@@ -56,8 +57,9 @@ sequenceDiagram
   participant M as Model
   participant T as 工具与权限
   U->>V: 输入内容并提交
-  V->>R: dispatch(run)
-  R->>A: run(input)
+  V->>R: dispatch(tasks.run)
+  R-->>V: task(running)
+  R->>A: TaskRunner 调用 runDetailed(input, runId)
   A-->>V: 用户消息事件
   A->>M: complete(messages, tools)
   M-->>V: 文本 / 思考进度
@@ -71,21 +73,25 @@ sequenceDiagram
   A->>M: 携带工具结果继续调用
   M-->>A: 最终回复与用量
   A-->>V: 助手消息事件
-  R->>R: 保存会话
-  R-->>V: 空闲状态快照
+  R->>R: TaskRunner 汇总证据并保存会话/结果
+  R-->>V: task(终态, result) 与状态快照
 ```
 
 图中事件通过运行时转发，最终进入展示层的状态投影；Agent 并不直接调用终端组件。只有需要授权的工具才进入审批流程。
 
 模型不会直接改文件。它返回工具名称和 JSON 参数，注册表验证后执行具体工具，再把结果作为 `tool` 消息交给模型。工具错误也会变成可见结果，让模型有机会调整下一步。
 
-任务不设固定模型调用轮数上限。模型继续请求工具时，循环执行工具并再次调用模型；返回不含工具调用的最终回复时，记录任务完成。取消或错误通过异常路径结束任务，保留当前历史并标记中断。
+任务不设固定模型调用轮数上限。模型继续请求有效工具时，循环执行工具并再次调用模型；正常返回不含工具调用的最终回复时结束核心循环。`core/completion.ts` 统一供应商结束原因，截断、拒绝、暂停和空回复通过带类型的错误结束。断流保留已收到的正文，未完成的工具调用不会执行。
 
-## 4. 三种容易混淆的数据
+应用层的 `TaskRunner` 汇总实际工具证据，决定任务终态，再保存会话和结构化结果。未解决的授权拒绝标为受阻，当前失败检查和结果保存失败标为失败。模型正常回复也可能没有运行验证，因此 `completed` 和 `verification.status` 是两个独立字段，不能用模型一句“已测试”替代命令记录。
+
+## 4. 四种容易混淆的数据
 
 **会话历史 `Message[]`** 是持久数据，记录用户、助手、工具调用与工具结果。助手消息携带用量和 `thinkingMs` 耗时；临时思考内容不写入会话。Agent 发出 `model_start`、`thinking_end` 事件，界面负责实时计时和格式化。耗时从请求开始算到首段正文；纯工具或非流式回复计到完成，不含工具执行时间。
 
 **运行事件 `RuntimeEvent`** 描述正在发生的变化，例如文本片段、工具开始、审批请求和任务错误。客户端订阅这些事件。事件都是可以 JSON 序列化的数据。
+
+**任务结果 `TaskResult`** 是一次运行的终态记录，包含 `runId`、状态、摘要、结束原因、修改文件、工具证据、验证、未完成事项和本轮统计。`TaskSnapshot` 则还包含运行中和等待审批状态。它们由应用层生成，核心循环无需知道前端如何显示。`infra/task-results.ts` 校验并保存每个会话的最后一条结果；较新的中断日志存在时，不会显示旧任务成功结果。这里没有执行断点或自动恢复逻辑。
 
 **展示状态 `PresentationState`** 是界面需要的数据：对话条目、正在流出的回答、当前工具、审批和最新提示。`thinkingHistory` 以消息位置保存当前会话收到的思考文本；助手消息提交时将流式文本移入这个内存投影，回复完成后仍可展开，工具调用专用的空正文回复也能展示思考。它不进入 Agent 历史、持久化或模型请求，切换、重置会话后清空。`reducePresentation()` 是纯函数，不读文件、不请求模型，也不依赖终端。
 
@@ -138,7 +144,8 @@ const unsubscribe = client.subscribe((event) => {
 
 try {
   await client.initialize();
-  await client.dispatch({ type: 'run', input: '列出当前目录的文件' });
+  const result = await client.dispatch({ type: 'tasks.run', input: '列出当前目录的文件' });
+  console.log(result.status, result.verification.status);
 } finally {
   unsubscribe();
   await client.close();
@@ -162,7 +169,8 @@ client.subscribe((event) => {
 });
 
 await client.initialize();
-await client.dispatch({ type: 'run', input: '你好' });
+const result = await client.dispatch({ type: 'tasks.run', input: '你好' });
+console.log(result.status, result.summary);
 // 页面卸载时调用 client.close()，关闭该客户端的连接。
 ```
 
@@ -172,18 +180,21 @@ await client.dispatch({ type: 'run', input: '你好' });
 
 ## 7. 存储与扩展的位置
 
-| 要改什么     | 从哪里开始                                                        |
-| ------------ | ----------------------------------------------------------------- |
-| 新终端样式   | `presentation/terminal/theme.ts`、`transcript-view.ts`、`view.ts` |
-| 新斜杠命令   | `presentation/commands.ts` 与 `command-router.ts`                 |
-| 新客户端动作 | `app/contracts.ts`、`command-schema.ts`、`runtime.ts`             |
-| 新工具       | `tools/` 中注册工具，再在 `app/services.ts` 接入                  |
-| 新模型协议   | 实现 `Model.complete()`，接入 `core/providers.ts`                 |
-| 上下文策略   | `core/context/manager.ts`                                         |
-| 会话文件格式 | `infra/memory.ts`                                                 |
-| 长期记忆     | `infra/long-memory.ts`、`scoped-memory.ts`                        |
-| 其他通信方式 | 实现 `AgentClient`，可参考 `adapters/http/client.ts`              |
+| 要改什么       | 从哪里开始                                                        |
+| -------------- | ----------------------------------------------------------------- |
+| 新终端样式     | `presentation/terminal/theme.ts`、`transcript-view.ts`、`view.ts` |
+| 新斜杠命令     | `presentation/commands.ts` 与 `command-router.ts`                 |
+| 新客户端动作   | `app/contracts.ts`、`command-schema.ts`、`runtime.ts`             |
+| 新工具         | `tools/` 中注册工具，再在 `app/services.ts` 接入                  |
+| 新模型协议     | 实现 `Model.complete()`，接入 `core/providers.ts`                 |
+| 上下文策略     | `core/context/manager.ts`                                         |
+| 会话文件格式   | `infra/memory.ts`                                                 |
+| 任务状态与结果 | `app/tasks.ts`、`task-runner.ts`、`infra/task-results.ts`         |
+| 长期记忆       | `infra/long-memory.ts`、`scoped-memory.ts`                        |
+| 其他通信方式   | 实现 `AgentClient`，可参考 `adapters/http/client.ts`              |
 
 `core/ports.ts` 定义上下文、工具归档和执行日志接口。Agent 使用接口，文件实现由运行时注入。今后可以替换数据库或远端存储，而不把这些实现写入模型循环。
+
+工具的 `evidence(args, result)` 从真实执行返回值提取有限记录。`ToolRegistry.invokeDetailed()` 返回面向模型的输出、执行状态和证据，Agent 通过 `tool_end` 转发；`TaskRunner` 监听这些数据。内置 `write_file` 记录路径，`run_command` 记录命令、退出码、超时、取消和日志位置。验证只统计 `purpose: 'verification'` 的命令，并以最后一次文件修改之后的检查为准。扩展工具需要自行提供证据；目前没有扫描全部磁盘变化来识别命令和 MCP 的副作用。
 
 项目用 Prettier 统一排版，并启用 TypeScript 严格检查及未使用代码检查。修改后运行 `npm run check`、`npm test` 和 `npm run format:check`。

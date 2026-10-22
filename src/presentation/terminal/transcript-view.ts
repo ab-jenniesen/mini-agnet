@@ -154,6 +154,18 @@ export class TranscriptView implements Component {
         return [
           ...wrapTextWithAnsi(theme.accent('● 助手'), width),
           ...new Markdown(safeText(entry.text), 0, 0, markdownTheme).render(width),
+          ...(['length', 'blocked', 'pause', 'error'].includes(entry.finishReason ?? '')
+            ? wrapTextWithAnsi(
+                theme.warning(
+                  entry.finishReason === 'length'
+                    ? '回复已截断，任务未完成'
+                    : entry.finishReason === 'blocked'
+                      ? '回复受阻'
+                      : '回复未完整结束',
+                ),
+                width,
+              )
+            : []),
           ...(entry.thinkingMs === undefined
             ? []
             : wrapTextWithAnsi(

@@ -11,6 +11,7 @@ import type { ModelCatalog } from '../core/model-discovery.js';
 import type { CredentialStatus } from '../infra/credentials.js';
 import type { ScopedMemoryEntry } from '../infra/scoped-memory.js';
 import type { Todo } from '../infra/todos.js';
+import type { TaskResult, TaskSnapshot } from './tasks.js';
 
 export type ApprovalView = { request: ApprovalRequest; preview: string };
 export type SessionView = {
@@ -40,10 +41,12 @@ export type RuntimeSnapshot = SessionView & {
   metrics: AgentMetrics;
   running: boolean;
   pendingApprovals: ApprovalView[];
+  task?: TaskSnapshot;
 };
 
 /** JSON data only: suitable for direct calls, HTTP/SSE, Electron IPC or a WebSocket. */
 export type RuntimeEvent =
+  | { type: 'task'; task: TaskSnapshot }
   | { type: 'agent'; event: AgentEvent }
   | { type: 'permission'; event: PermissionEvent }
   | { type: 'state'; state: RuntimeSnapshot }
@@ -56,6 +59,8 @@ export type RuntimeEvent =
 type Action<Input, Output> = { input: Input; output: Output };
 export type Actions = {
   run: Action<{ input: string }, string>;
+  'tasks.run': Action<{ input: string }, TaskResult>;
+  'tasks.current': Action<{}, TaskSnapshot | undefined>;
   cancel: Action<{}, void>;
   'sessions.list': Action<{}, string[]>;
   'sessions.switch': Action<{ id: string }, SessionView>;

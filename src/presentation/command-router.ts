@@ -1,5 +1,6 @@
 import type { AgentClient, RuntimeSnapshot } from '../app/contracts.js';
 import { commands } from './commands.js';
+import { taskReport } from './task-status.js';
 
 export type CommandEffect =
   | { type: 'exit' | 'help' | 'providers' | 'close-output' }
@@ -86,6 +87,8 @@ export async function routeInput(
       );
     case '/stats':
       return panel(JSON.stringify(state.metrics, null, 2));
+    case '/task':
+      return panel(taskReport(await client.dispatch({ type: 'tasks.current' })));
     case '/tools':
       return panel((await client.dispatch({ type: 'tools.list' })).join('\n'));
     case '/memories':

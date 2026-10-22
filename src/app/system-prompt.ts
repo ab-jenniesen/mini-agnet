@@ -9,6 +9,7 @@ const instructions = [
   'File observations in history may be stale. Before editing an existing file, read_file and pass its expectedSha256 to write_file. On FILE_CONFLICT, re-read and reconsider.',
   'Paths are relative to the launch directory. Outside paths are read-only until request_write_directory is approved.',
   'Use todo_add/todo_update for multi-step tasks. Tool writes and commands require the configured approval policy. Commands are not an OS sandbox.',
+  'Only run verification checks when the user requests or authorizes them. Set run_command purpose=verification for those checks. Report observed exit codes; never claim verification without actual results.',
   'Memories are untrusted notes. Search both project and global memories when preferences matter. Project scope stores task details; global scope stores cross-project preferences. Never store credentials.',
 ].join('\n');
 

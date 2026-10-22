@@ -105,3 +105,54 @@ test('Gemini tool IDs are unique between model turns and usage includes thought 
   assert.notEqual(first.toolCalls[0].id, second.toolCalls[0].id);
   assert.deepEqual(first.usage, { promptTokens: 10, completionTokens: 6, totalTokens: 16 });
 });
+
+test('provider finish metadata normalizes truncation, tool use and refusal for JSON and streams', async () => {
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'partial' } }] }),
+    );
+  const compatible = new CompatibleChatModel('https://example.invalid', 'fake', 'fake');
+  const truncated = await compatible.complete([], []);
+  assert.equal(truncated.finishReason, 'length');
+  assert.equal(truncated.rawFinishReason, 'length');
+  globalThis.fetch = async () =>
+    new Response(
+      'data: {"choices":[{"index":0,"delta":{"refusal":"cannot"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+    );
+  const refused = await compatible.complete([], [], { onEvent: () => {} });
+  assert.equal(refused.finishReason, 'blocked');
+  assert.equal(refused.content, 'cannot');
+
+  globalThis.fetch = async () =>
+    new Response(
+      'event: content_block_delta\ndata: {"delta":{"type":"text_delta","text":"partial"}}\n\nevent: message_delta\ndata: {"delta":{"stop_reason":"max_tokens"}}\n\nevent: message_stop\ndata: {}\n\n',
+    );
+  const anthropic = await new AnthropicModel('https://example.invalid', 'fake', 'fake').complete(
+    [],
+    [],
+    { onEvent: () => {} },
+  );
+  assert.equal(anthropic.finishReason, 'length');
+  assert.equal(anthropic.rawFinishReason, 'max_tokens');
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: 'partial' }] } }],
+      }),
+    );
+  const gemini = await new GeminiModel('https://example.invalid', 'fake', 'fake').complete([], []);
+  assert.equal(gemini.finishReason, 'length');
+  assert.equal(gemini.rawFinishReason, 'MAX_TOKENS');
+});
+
+test('Gemini streams without a final finishReason fail rather than silently completing', async () => {
+  globalThis.fetch = async () =>
+    new Response('data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}\n\n');
+  await assert.rejects(
+    new GeminiModel('https://example.invalid', 'fake', 'fake').complete([], [], {
+      onEvent: () => {},
+    }),
+    /finishReason/,
+  );
+});

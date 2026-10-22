@@ -4,6 +4,7 @@ import type { AgentClient, RuntimeEvent, RuntimeSnapshot } from '../app/contract
 import { routeInput, helpText } from './command-router.js';
 import { usageText } from './terminal/transcript-view.js';
 import { safeText } from './terminal/theme.js';
+import { taskStatusText } from './task-status.js';
 
 /** The readline adapter shares the same host, commands and approvals as the TUI. */
 export async function runClassic(client: AgentClient, initialInput?: string): Promise<void> {
@@ -43,6 +44,10 @@ export async function runClassic(client: AgentClient, initialInput?: string): Pr
   const approvals = new Map<string, Promise<void>>();
   const receive = (event: RuntimeEvent): void => {
     if (event.type === 'state') state = event.state;
+    if (event.type === 'task' && event.task.result) {
+      finishLine();
+      console.log(safeText(taskStatusText(event.task)));
+    }
     if (event.type === 'notice' || event.type === 'run_error') {
       finishLine();
       console.log(safeText(event.text));
@@ -128,7 +133,7 @@ export async function runClassic(client: AgentClient, initialInput?: string): Pr
         if (effect.type === 'exit') break;
         switch (effect.type) {
           case 'run':
-            await client.dispatch({ type: 'run', input: effect.input });
+            await client.dispatch({ type: 'tasks.run', input: effect.input });
             break;
           case 'help':
             console.log(helpText());

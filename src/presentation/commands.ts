@@ -9,6 +9,13 @@ export type CommandEntry = {
 // Keep the help panel and the input suggestions in sync with TUI commands.
 export const commands: CommandEntry[] = [
   {
+    type: '任务',
+    command: '/task',
+    example: '/task',
+    detail: '查看当前任务状态、结束原因、修改文件和验证记录',
+    completion: '/task',
+  },
+  {
     type: '模型',
     command: '/model [provider] [model-id]',
     example: '/model deepseek deepseek-chat',

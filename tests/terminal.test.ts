@@ -243,3 +243,45 @@ test('Ctrl+C cancels the task while its approval dialog has focus', { timeout: 5
     await f.close();
   }
 });
+
+test('Ctrl+I reveals completed thinking and Ctrl+O cycles all three tool display modes', async () => {
+  const f = await runtimeFixture({
+    async complete(_messages, _tools, options) {
+      options?.onEvent?.({ type: 'thinking', text: '保留的思考内容', source: 'summary' });
+      options?.onEvent?.({ type: 'text', text: 'answer' });
+      return { content: 'answer', toolCalls: [], finishReason: 'stop' };
+    },
+  });
+  const terminal = new FakeTerminal();
+  const view = new TerminalView(terminal);
+  const controller = new TerminalController(f.runtime, view);
+  try {
+    await controller.start();
+    await controller.submit('hello');
+    view.tui.renderNow();
+    await terminal.flush();
+    assert.doesNotMatch(terminal.screen(), /保留的思考内容/);
+    terminal.input('\t');
+    view.tui.renderNow();
+    await terminal.flush();
+    assert.equal(view.thinkingMode, 'expanded');
+    assert.match(terminal.screen(), /保留的思考内容/);
+    terminal.input('\t');
+    view.tui.renderNow();
+    await terminal.flush();
+    assert.doesNotMatch(terminal.screen(), /保留的思考内容/);
+    for (const mode of ['all', 'collapsed', 'recent']) {
+      terminal.input('\x0f');
+      assert.equal(view.toolDisplayMode, mode);
+    }
+    await controller.submit('/task');
+    view.tui.renderNow();
+    await terminal.flush();
+    assert.match(terminal.screen(), /已完成/);
+    assert.match(terminal.screen(), /未验证/);
+  } finally {
+    await controller.close();
+    terminal.dispose();
+    await f.close();
+  }
+});

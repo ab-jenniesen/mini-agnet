@@ -18,6 +18,10 @@ const messageSchema = z.union([
     content: z.string().nullable(),
     usage: usageSchema.optional(),
     thinkingMs: z.number().nonnegative().finite().optional(),
+    finishReason: z
+      .enum(['stop', 'tool_calls', 'length', 'blocked', 'pause', 'error', 'unknown'])
+      .optional(),
+    rawFinishReason: z.string().optional(),
     tool_calls: z
       .array(
         z.object({

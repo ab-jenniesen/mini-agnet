@@ -1,4 +1,4 @@
-import type { Tool } from './types.js';
+import type { Tool, ToolExecution } from './types.js';
 import type { PermissionManager } from './permissions/manager.js';
 import { z, type ZodTypeAny } from 'zod';
 
@@ -26,10 +26,25 @@ export class ToolRegistry {
     toolCallId?: string,
     signal?: AbortSignal,
   ): Promise<string> {
+    return (await this.invokeDetailed(name, input, approve, toolCallId, signal)).output;
+  }
+
+  async invokeDetailed(
+    name: string,
+    input: unknown,
+    approve: (name: string, args: unknown) => Promise<boolean>,
+    toolCallId?: string,
+    signal?: AbortSignal,
+  ): Promise<ToolExecution> {
+    const failure = (output: string, status: 'denied' | 'error' = 'error'): ToolExecution => ({
+      output,
+      status,
+      evidence: [],
+    });
     const tool = this.items.get(name);
-    if (!tool) return `ERROR: Unknown tool ${name}`;
+    if (!tool) return failure(`ERROR: Unknown tool ${name}`);
     if (!input || typeof input !== 'object' || Array.isArray(input))
-      return 'ERROR: Tool arguments must be an object';
+      return failure('ERROR: Tool arguments must be an object');
     try {
       signal?.throwIfAborted();
       const args = tool.validator
@@ -44,19 +59,23 @@ export class ToolRegistry {
             toolCallId,
           );
           if (!outcome.allowed)
-            return JSON.stringify({
-              status: 'denied',
-              tool: name,
-              decision: outcome.decision,
-              approvalId: outcome.request.id,
-              written: false,
-            });
+            return failure(
+              JSON.stringify({
+                status: 'denied',
+                tool: name,
+                decision: outcome.decision,
+                approvalId: outcome.request.id,
+                written: false,
+              }),
+              'denied',
+            );
           approval = { id: outcome.request.id, decision: outcome.decision };
-        } else if (!(await approve(name, args))) return 'ERROR: User denied operation';
+        } else if (!(await approve(name, args)))
+          return failure('ERROR: User denied operation', 'denied');
       }
       signal?.throwIfAborted();
       const output = await tool.execute(args as Record<string, unknown>, { signal });
-      return approval
+      const outputText = approval
         ? JSON.stringify({
             status: 'success',
             tool: name,
@@ -67,8 +86,13 @@ export class ToolRegistry {
         : typeof output === 'string'
           ? output
           : (JSON.stringify(output) ?? 'null');
+      return {
+        output: outputText,
+        status: 'success',
+        evidence: tool.evidence?.(args as Record<string, unknown>, output) ?? [],
+      };
     } catch (error) {
-      return `ERROR: ${error instanceof Error ? error.message : String(error)}`;
+      return failure(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

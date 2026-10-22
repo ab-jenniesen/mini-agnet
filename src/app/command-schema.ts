@@ -8,6 +8,8 @@ const noArgs = <T extends string>(type: T) => z.object({ type: z.literal(type) }
 /** Validate untrusted transport data at the application boundary. */
 export const commandSchema: z.ZodType<Command> = z.discriminatedUnion('type', [
   z.object({ type: z.literal('run'), input: z.string().min(1).max(1_000_000) }).strict(),
+  z.object({ type: z.literal('tasks.run'), input: z.string().min(1).max(1_000_000) }).strict(),
+  noArgs('tasks.current'),
   noArgs('cancel'),
   noArgs('sessions.list'),
   noArgs('sessions.reset'),
