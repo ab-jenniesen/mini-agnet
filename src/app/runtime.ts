@@ -238,7 +238,7 @@ export class AgentRuntime implements AgentClient {
   private async finishRun(task: Promise<string>, services: RuntimeServices): Promise<string> {
     try {
       const result = await task;
-      services.interrupted = result.startsWith('Stopped:');
+      services.interrupted = false;
       return result;
     } catch (error) {
       services.interrupted = true;

@@ -57,7 +57,11 @@ export class TerminalController {
   private receive(event: RuntimeEvent): void {
     if (this.stopped) return;
     this.state = reducePresentation(this.state, event);
-    if (event.type === 'notice' || (event.type === 'agent' && event.event.type === 'context'))
+    if (
+      event.type === 'notice' ||
+      (event.type === 'agent' &&
+        (event.event.type === 'context' || event.event.type === 'thinking'))
+    )
       this.view.clearStatus();
     this.view.update(this.state);
     const approval = this.state.approval;

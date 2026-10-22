@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentMetrics, Message, Model, ToolCall, Usage } from './types.js';
+import type { AgentMetrics, Message, Model, ModelReply, Tool, ToolCall, Usage } from './types.js';
 import type { AgentEvent } from './events.js';
 import type { ArtifactPort, ContextPort, JournalPort } from './ports.js';
 import { ToolRegistry } from './registry.js';
@@ -8,7 +8,6 @@ export type { AgentEvent } from './events.js';
 export type { ArtifactPort, ContextPort, JournalPort } from './ports.js';
 
 export type AgentOptions = {
-  maxSteps?: number;
   maxHistoryChars?: number;
   maxInlineToolChars?: number;
   approve?: (name: string, args: unknown) => Promise<boolean>;
@@ -43,9 +42,6 @@ export class Agent {
     private readonly options: AgentOptions = {},
     initial: Message[] = [],
   ) {
-    if (!Number.isSafeInteger(options.maxSteps ?? 15) || (options.maxSteps ?? 15) < 1) {
-      throw new Error('maxSteps must be a positive integer');
-    }
     // Regenerate machine paths and project instructions when reopening migrated history.
     this.history = [
       { role: 'system', content: systemPrompt },
@@ -100,7 +96,8 @@ export class Agent {
       this.options.signal?.throwIfAborted();
       await this.options.journal?.begin(randomUUID());
       this.append({ role: 'user', content: input });
-      for (let step = 1; step <= (this.options.maxSteps ?? 15); step++) {
+      // Continue until the model returns a final reply without tool calls.
+      for (let step = 1; ; step++) {
         this.options.signal?.throwIfAborted();
         this.options.onProgress?.({ type: 'step', step });
         const prepared = this.options.context
@@ -121,13 +118,10 @@ export class Agent {
           this.options.onProgress?.({ type: 'context', ...prepared.report });
         } else this.compact();
 
-        const reply = await meteredModel.complete(
+        const { reply, thinkingMs } = await this.requestModel(
+          meteredModel,
           prepared?.messages ?? this.history,
           this.tools.list(),
-          {
-            signal: this.options.signal,
-            onEvent: this.options.onProgress,
-          },
         );
         this.options.signal?.throwIfAborted();
 
@@ -141,6 +135,7 @@ export class Agent {
         this.append({
           role: 'assistant',
           content,
+          thinkingMs,
           ...(calls.length
             ? {
                 tool_calls: calls.map((call) => ({
@@ -163,14 +158,6 @@ export class Agent {
         for (const call of calls) await this.executeTool(call);
         this.options.signal?.throwIfAborted();
       }
-      const stopped = `Stopped: reached maximum ${this.options.maxSteps ?? 15} model turns. The task may be unfinished.`;
-      this.append({
-        role: 'assistant',
-        content: stopped,
-        ...(turnUsage ? { usage: { ...turnUsage, partial: missingUsage } } : {}),
-      });
-      await this.options.journal?.finish('interrupted');
-      return stopped;
     } catch (error) {
       // Repair protocol pairs even if persistence itself failed; preserve the original error.
       this.completePendingToolResults();
@@ -180,6 +167,34 @@ export class Agent {
       this.metrics.lastRunMs = performance.now() - started;
       this.running = false;
     }
+  }
+
+  /** Stop at first answer text; tool-only/nonstreaming replies stop at completion. Tools are excluded. */
+  private async requestModel(
+    model: Model,
+    messages: Message[],
+    tools: Tool[],
+  ): Promise<{ reply: ModelReply; thinkingMs: number }> {
+    const started = performance.now();
+    let thinkingMs: number | undefined;
+    const finishThinking = (): number => {
+      if (thinkingMs === undefined) {
+        thinkingMs = performance.now() - started;
+        this.options.onProgress?.({ type: 'thinking_end', ms: thinkingMs });
+      }
+      return thinkingMs;
+    };
+    this.options.onProgress?.({ type: 'model_start', startedAt: Date.now() });
+    const reply = await model.complete(messages, tools, {
+      signal: this.options.signal,
+      onEvent: this.options.onProgress
+        ? (event) => {
+            if (event.type === 'text' && event.text) finishThinking();
+            this.options.onProgress?.(event);
+          }
+        : undefined,
+    });
+    return { reply, thinkingMs: finishThinking() };
   }
 
   private async executeTool(call: ToolCall): Promise<void> {

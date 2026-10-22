@@ -15,6 +15,7 @@ import {
   type SelectItem,
 } from '@earendil-works/pi-tui';
 import type { PresentationState } from '../view-model.js';
+import type { ToolDisplayMode } from '../turns.js';
 import { editorTheme, safeText, theme } from './theme.js';
 import { Dialog, SecretInput, choiceDialog } from './dialogs.js';
 import { PagedText } from './paged-text.js';
@@ -50,11 +51,14 @@ export class TerminalView {
   private cancelDialog?: () => void;
   private panelOpen = false;
   private stopped = false;
+  private started = false;
+  private thinkingTimer?: ReturnType<typeof setInterval>;
   private footerNotice?: { tone: 'info' | 'warning' | 'error'; text: string };
   onSubmit?: (text: string) => void;
   onCancel?: () => void;
   onExit?: () => void;
-  thinkingMode: ThinkingMode = 'expanded';
+  thinkingMode: ThinkingMode = 'collapsed';
+  toolDisplayMode: ToolDisplayMode = 'recent';
 
   constructor(
     readonly terminal: Terminal,
@@ -91,8 +95,8 @@ export class TerminalView {
       truncateToWidth(
         theme.dim(
           this.state?.snapshot?.running
-            ? 'Ctrl+C 取消任务 · Ctrl+T 切换思考 · PgUp/PgDn 回看'
-            : 'Enter 发送 · Shift+Enter / Ctrl+J 换行 · ↑↓ 历史/候选 · Tab 补全 · Ctrl+C 退出',
+            ? `Ctrl+C 取消 · Ctrl+I 思考${this.thinkingMode === 'expanded' ? '已展开' : '已收起'} · Ctrl+O ${this.transcript.toolDisplayLabel}`
+            : `Enter 发送 · Tab 补全 · Ctrl+I 思考${this.thinkingMode === 'expanded' ? '已展开' : '已收起'} · Ctrl+O ${this.transcript.toolDisplayLabel}`,
         ),
         width,
       ),
@@ -131,8 +135,17 @@ export class TerminalView {
         } else this.onExit?.();
         return { consume: true };
       }
-      if (matchesKey(data, 'ctrl+t')) {
+      // Legacy terminals encode Ctrl+I and Tab as the same byte. Preserve draft completion.
+      const thinkingShortcut =
+        data === '\t'
+          ? this.state?.snapshot?.running || this.editor.getText().length === 0
+          : matchesKey(data, 'ctrl+i');
+      if (thinkingShortcut || matchesKey(data, 'ctrl+t')) {
         this.cycleThinking();
+        return { consume: true };
+      }
+      if (matchesKey(data, 'ctrl+o')) {
+        this.cycleTools();
         return { consume: true };
       }
       if (this.state?.snapshot?.running) return { consume: true };
@@ -151,6 +164,7 @@ export class TerminalView {
     this.state = state;
     this.editor.disableSubmit = !state.snapshot || state.snapshot.running;
     this.transcript.update(state);
+    this.syncThinkingTimer();
     if (switched) {
       this.scroll?.scrollToEnd();
       if (this.tui instanceof TuiAltScreen) this.tui.resetTextSelection();
@@ -175,11 +189,53 @@ export class TerminalView {
             ? 'hidden'
             : this.thinkingMode === 'expanded'
               ? 'collapsed'
-              : this.thinkingMode === 'collapsed'
-                ? 'hidden'
-                : 'expanded';
+              : 'expanded';
     this.transcript.setThinkingMode(this.thinkingMode);
+    if (this.thinkingMode === 'expanded' && !this.transcript.hasThinking)
+      this.status(
+        'info',
+        this.state?.snapshot?.running
+          ? '尚未收到可展示的思考内容，收到后会自动显示'
+          : '暂无思考记录：模型未返回思考内容，或这段会话是在此前启动中生成的',
+      );
+    else this.clearStatus();
+    if (this.started && this.scroll) {
+      // Lay out the expanded text before scrolling, so a long answer cannot hide the thinking above it.
+      this.tui.renderNow();
+      const line = this.transcript.latestThinkingLine;
+      if (this.thinkingMode === 'expanded' && line !== undefined)
+        this.scroll.scrollTo(line, { disableFollow: true });
+      else if (this.thinkingMode !== 'expanded') this.scroll.scrollToEnd();
+    }
     this.tui.requestRender();
+  }
+
+  cycleTools(): void {
+    this.toolDisplayMode =
+      this.toolDisplayMode === 'collapsed'
+        ? 'recent'
+        : this.toolDisplayMode === 'recent'
+          ? 'all'
+          : 'collapsed';
+    this.transcript.setToolDisplayMode(this.toolDisplayMode);
+    this.tui.requestRender();
+  }
+
+  /** Refresh elapsed time during a silent provider wait; stop the timer as soon as thinking ends. */
+  private syncThinkingTimer(): void {
+    const activity = this.state?.modelActivity;
+    const thinking =
+      this.started &&
+      this.state?.snapshot?.running &&
+      activity &&
+      activity.thinkingMs === undefined;
+    if (thinking && !this.thinkingTimer) {
+      this.thinkingTimer = setInterval(() => this.tui.requestRender(), 250);
+      this.thinkingTimer.unref();
+    } else if (!thinking && this.thinkingTimer) {
+      clearInterval(this.thinkingTimer);
+      this.thinkingTimer = undefined;
+    }
   }
 
   private show(dialog: Dialog, cancel: () => void): void {
@@ -289,10 +345,14 @@ export class TerminalView {
   start(): void {
     this.stopped = false;
     this.tui.start();
+    this.started = true;
+    this.syncThinkingTimer();
   }
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.started = false;
+    this.syncThinkingTimer();
     this.closeDialog();
     this.tui.stop({ preserveScreen: this.tui.mode === 'fullscreen' });
   }

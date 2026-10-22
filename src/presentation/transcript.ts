@@ -1,8 +1,18 @@
 import type { Message, Usage } from '../core/types.js';
 
+/** Public provider thinking stays in client memory, separate from canonical messages. */
+export type ThinkingHistory = Readonly<Record<number, string>>;
+
 export type TranscriptEntry =
   | { kind: 'user'; text: string }
-  | { kind: 'assistant'; text: string; usage?: Usage; usageScope: 'call' | 'turn' }
+  | { kind: 'thinking'; text: string; durationMs?: number }
+  | {
+      kind: 'assistant';
+      text: string;
+      usage?: Usage;
+      usageScope: 'call' | 'turn';
+      thinkingMs?: number;
+    }
   | {
       kind: 'tool';
       callId: string;
@@ -20,18 +30,31 @@ export function preview(value: string, limit = 180): string {
 }
 
 /** One projection for loaded history and live messages prevents duplicate tool records. */
-export function transcript(messages: Message[]): TranscriptEntry[] {
+export function transcript(
+  messages: Message[],
+  thinkingHistory: ThinkingHistory = {},
+): TranscriptEntry[] {
   const calls = new Map<string, { name: string; args: string }>();
   const entries: TranscriptEntry[] = [];
-  for (const message of messages) {
-    if (message.role === 'user') entries.push({ kind: 'user', text: message.content });
+  let turnThinkingMs: number | undefined;
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'user') {
+      turnThinkingMs = undefined;
+      entries.push({ kind: 'user', text: message.content });
+    }
     if (message.role === 'assistant') {
+      const thinking = thinkingHistory[index];
+      if (thinking)
+        entries.push({ kind: 'thinking', text: thinking, durationMs: message.thinkingMs });
+      if (message.thinkingMs !== undefined)
+        turnThinkingMs = (turnThinkingMs ?? 0) + message.thinkingMs;
       if (message.content !== null)
         entries.push({
           kind: 'assistant',
           text: message.content,
           usage: message.usage,
           usageScope: message.tool_calls?.length ? 'call' : 'turn',
+          thinkingMs: message.tool_calls?.length ? message.thinkingMs : turnThinkingMs,
         });
       for (const call of message.tool_calls ?? [])
         calls.set(call.id, {

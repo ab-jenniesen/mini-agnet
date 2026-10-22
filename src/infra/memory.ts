@@ -17,6 +17,7 @@ const messageSchema = z.union([
     role: z.literal('assistant'),
     content: z.string().nullable(),
     usage: usageSchema.optional(),
+    thinkingMs: z.number().nonnegative().finite().optional(),
     tool_calls: z
       .array(
         z.object({

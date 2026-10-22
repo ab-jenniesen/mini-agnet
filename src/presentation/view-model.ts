@@ -1,6 +1,6 @@
 import type { ApprovalView, RuntimeEvent, RuntimeSnapshot } from '../app/contracts.js';
 import type { Message } from '../core/types.js';
-import { transcript, preview, type TranscriptEntry } from './transcript.js';
+import { transcript, preview, type ThinkingHistory, type TranscriptEntry } from './transcript.js';
 
 export type Notice = { tone: 'info' | 'warning' | 'error'; text: string };
 export type PresentationState = {
@@ -9,8 +9,10 @@ export type PresentationState = {
   conversation: TranscriptEntry[];
   answer: string;
   thinking: string;
+  thinkingHistory: ThinkingHistory;
+  modelActivity?: { startedAt: number; thinkingMs?: number };
   step: number;
-  activeTool?: { name: string; args: string };
+  activeTool?: { callId: string; name: string; args: string };
   approval?: ApprovalView;
   notice?: Notice;
 };
@@ -20,6 +22,7 @@ export const initialPresentationState = (): PresentationState => ({
   conversation: [],
   answer: '',
   thinking: '',
+  thinkingHistory: {},
   step: 0,
 });
 
@@ -29,7 +32,7 @@ function rebuild(state: PresentationState, messages: Message[]): TranscriptEntry
       .filter((entry) => entry.kind === 'tool')
       .map((entry) => [entry.callId, entry]),
   );
-  const entries = transcript(messages).map((entry) =>
+  const entries = transcript(messages, state.thinkingHistory).map((entry) =>
     entry.kind === 'tool' && tools.has(entry.callId)
       ? { ...entry, durationMs: tools.get(entry.callId)!.durationMs }
       : entry,
@@ -48,28 +51,50 @@ export function reducePresentation(
       const reset = input.state.history.length < state.messages.length;
       const changed = JSON.stringify(state.messages) !== JSON.stringify(input.state.history);
       const base = switched || reset ? initialPresentationState() : state;
+      // Message indices survive append-only snapshots, but edited/replaced messages must lose stale text.
+      const thinkingHistory = Object.fromEntries(
+        Object.entries(base.thinkingHistory).filter(([index]) => {
+          const position = Number(index);
+          return (
+            JSON.stringify(base.messages[position]) ===
+            JSON.stringify(input.state.history[position])
+          );
+        }),
+      );
       return {
         ...base,
+        thinkingHistory,
         snapshot: input.state,
         messages: input.state.history,
         conversation:
           switched || reset
             ? transcript(input.state.history)
             : changed
-              ? rebuild(base, input.state.history)
+              ? rebuild({ ...base, thinkingHistory }, input.state.history)
               : base.conversation,
         approval: input.state.pendingApprovals[0],
-        ...(!input.state.running ? { answer: '', thinking: '', activeTool: undefined } : {}),
+        ...(!input.state.running
+          ? { answer: '', thinking: '', modelActivity: undefined, activeTool: undefined }
+          : {}),
       };
     }
     case 'message': {
       const messages = [...state.messages, input.message];
-      const added = transcript(messages).slice(transcript(state.messages).length);
+      const thinkingHistory =
+        input.message.role === 'assistant' && state.thinking
+          ? { ...state.thinkingHistory, [state.messages.length]: state.thinking }
+          : state.thinkingHistory;
+      const added = transcript(messages, thinkingHistory).slice(
+        transcript(state.messages, state.thinkingHistory).length,
+      );
       return {
         ...state,
         messages,
+        thinkingHistory,
         conversation: [...state.conversation, ...added],
-        ...(input.message.role === 'assistant' ? { answer: '', thinking: '' } : {}),
+        ...(input.message.role === 'assistant'
+          ? { answer: '', thinking: '', modelActivity: undefined }
+          : {}),
       };
     }
     case 'notice':
@@ -79,6 +104,7 @@ export function reducePresentation(
         ...state,
         answer: '',
         thinking: '',
+        modelActivity: undefined,
         activeTool: undefined,
         conversation: [...state.conversation, { kind: 'error', text: input.text }],
       };
@@ -92,15 +118,35 @@ export function reducePresentation(
       const event = input.event;
       switch (event.type) {
         case 'step':
-          return { ...state, step: event.step, answer: '', thinking: '', activeTool: undefined };
+          return {
+            ...state,
+            step: event.step,
+            answer: '',
+            thinking: '',
+            modelActivity: undefined,
+            activeTool: undefined,
+          };
+        case 'model_start':
+          return { ...state, modelActivity: { startedAt: event.startedAt } };
+        case 'thinking_end':
+          return {
+            ...state,
+            modelActivity: state.modelActivity
+              ? { ...state.modelActivity, thinkingMs: event.ms }
+              : undefined,
+          };
         case 'text':
           return { ...state, answer: state.answer + event.text };
         case 'thinking':
-          return { ...state, thinking: (state.thinking + event.text).slice(-16000) };
+          return { ...state, thinking: state.thinking + event.text };
         case 'tool_start':
           return {
             ...state,
-            activeTool: { name: event.name, args: preview(JSON.stringify(event.args) ?? '') },
+            activeTool: {
+              callId: event.callId,
+              name: event.name,
+              args: preview(JSON.stringify(event.args) ?? ''),
+            },
           };
         case 'tool_end':
           return {

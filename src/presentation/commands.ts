@@ -76,7 +76,7 @@ export const commands: CommandEntry[] = [
     type: '显示',
     command: '/thinking [on|collapse|off]',
     example: '/thinking collapse',
-    detail: '控制思考面板；Ctrl+T 循环切换',
+    detail: '思考过程默认折叠；Ctrl+I 展开或收起，off 隐藏，耗时始终显示',
     completion: '/thinking ',
   },
   {

@@ -1,7 +1,9 @@
 import type { TranscriptEntry } from './transcript.js';
 
 export type ConversationTurn = { number: number; entries: TranscriptEntry[] };
-export type TurnEntry = TranscriptEntry | { kind: 'folded-tools'; count: number };
+export type ToolDisplayMode = 'collapsed' | 'recent' | 'all';
+export type TurnEntry =
+  TranscriptEntry | { kind: 'folded-tools'; count: number; collapsed: boolean };
 
 /** A user message starts a turn; model steps and tool results belong to that same turn. */
 export function conversationTurns(entries: TranscriptEntry[]): ConversationTurn[] {
@@ -16,16 +18,28 @@ export function conversationTurns(entries: TranscriptEntry[]): ConversationTurn[
 }
 
 /** Limit the display only. The transcript and model's canonical history remain complete. */
-export function visibleTurnEntries(entries: TranscriptEntry[], maxTools: number): TurnEntry[] {
-  const toolCount = entries.filter((entry) => entry.kind === 'tool').length;
-  const hiddenCount = Math.max(0, toolCount - maxTools);
+export function visibleTurnEntries(
+  entries: TranscriptEntry[],
+  maxTools: number,
+  mode: ToolDisplayMode = 'recent',
+  activeCallId?: string,
+): TurnEntry[] {
+  if (mode === 'all') return entries;
+  const tools = entries.filter((entry) => entry.kind === 'tool');
+  const collapsed = mode === 'collapsed';
+  const hiddenCount = collapsed ? tools.length : Math.max(0, tools.length - maxTools);
+  // The tool result is committed just before tool_end. Count that call only once during this gap.
+  const activeCount = activeCallId && !tools.some((entry) => entry.callId === activeCallId) ? 1 : 0;
+  const count = hiddenCount + (collapsed ? activeCount : 0);
   const visible: TurnEntry[] = [];
   let skipped = 0;
   for (const entry of entries) {
     if (entry.kind === 'tool' && skipped < hiddenCount) {
-      if (skipped === 0) visible.push({ kind: 'folded-tools', count: hiddenCount });
+      if (skipped === 0) visible.push({ kind: 'folded-tools', count, collapsed });
       skipped++;
     } else visible.push(entry);
   }
+  if (collapsed && tools.length === 0 && count > 0)
+    visible.push({ kind: 'folded-tools', count, collapsed });
   return visible;
 }

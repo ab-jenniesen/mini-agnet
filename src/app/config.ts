@@ -11,7 +11,6 @@ export type RuntimeConfig = {
   globalMemoryPath: string;
   artifactDirectory?: string;
   sessionId: string;
-  maxSteps: number;
   maxInputChars: number;
   contextWindow?: number;
   outputReserve?: number;
@@ -45,7 +44,6 @@ export function runtimeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeCo
     globalMemoryPath: env.AGENT_GLOBAL_MEMORY_FILE ?? resolve(configDirectory, 'memories.json'),
     artifactDirectory: env.AGENT_ARTIFACT_DIR,
     sessionId: env.AGENT_SESSION_ID ?? 'default',
-    maxSteps: positiveInteger(env.AGENT_MAX_STEPS, 15)!,
     maxInputChars: positiveInteger(env.AGENT_MAX_INPUT_CHARS, 65536)!,
     contextWindow: positiveInteger(env.AGENT_CONTEXT_WINDOW_OVERRIDE, DEFAULT_CONTEXT_WINDOW),
     outputReserve: positiveInteger(env.AGENT_OUTPUT_RESERVE),
@@ -63,8 +61,7 @@ export function runtimeConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeCo
     (config.compactThreshold ?? 0.8) > 1
   )
     throw new Error('Invalid compact threshold');
-  for (const key of ['maxSteps', 'maxInputChars'] as const) {
-    if (!Number.isSafeInteger(config[key]) || config[key] < 1) throw new Error(`Invalid ${key}`);
-  }
+  if (!Number.isSafeInteger(config.maxInputChars) || config.maxInputChars < 1)
+    throw new Error('Invalid maxInputChars');
   return config;
 }

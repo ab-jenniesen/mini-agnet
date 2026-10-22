@@ -120,7 +120,6 @@ export async function createServices(
     registry,
     system,
     {
-      maxSteps: config.maxSteps,
       context,
       artifacts,
       journal,

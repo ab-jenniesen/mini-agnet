@@ -24,7 +24,7 @@ async function mockModel() {
     tool_calls: [],
   };
 }
-for (let i = 0; i < 5; i++) {
+while (true) {
   const reply = await mockModel(messages);
   messages.push(reply);
   if (!reply.tool_calls.length) {

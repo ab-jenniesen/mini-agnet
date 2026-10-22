@@ -3,6 +3,8 @@ import type { Usage } from './types.js';
 /** Progress data contains no terminal markup or UI callbacks. */
 export type AgentEvent =
   | { type: 'step'; step: number }
+  | { type: 'model_start'; startedAt: number }
+  | { type: 'thinking_end'; ms: number }
   | { type: 'text'; text: string }
   | { type: 'assistant_message'; content: string; usage?: Usage }
   | { type: 'thinking'; text: string; source: 'provider' | 'summary' }

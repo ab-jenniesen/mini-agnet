@@ -16,6 +16,8 @@ export type Message =
         function: { name: string; arguments: string };
       }>;
       usage?: Usage;
+      /** Request start to first answer text, or reply completion for tool-only/nonstreaming replies. */
+      thinkingMs?: number;
     }
   | { role: 'tool'; tool_call_id: string; content: string };
 export type Tool = {
