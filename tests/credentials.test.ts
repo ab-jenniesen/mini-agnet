@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CredentialStore } from '../src/infra/credentials.js';
+import { CredentialStore } from '../src/infra/configuration/credentials.js';
 
 test('credential persists across store reload but never into session', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agent-keys-'));

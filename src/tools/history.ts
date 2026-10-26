@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { ToolRegistry } from '../core/registry.js';
-import type { Message } from '../core/types.js';
-export function registerHistoryTools(registry: ToolRegistry, history: Message[]): void {
+import type { ToolRegistryPort } from '../core/tools/ports.js';
+import type { Message } from '../core/model/types.js';
+export function registerHistoryTools(registry: ToolRegistryPort, history: Message[]): void {
   registry.register({
     name: 'search_conversation',
     description:

@@ -1,12 +1,12 @@
-import { VerifiedFileCache } from '../infra/file-cache.js';
+import { VerifiedFileCache } from '../infra/workspace/file-cache.js';
 import { readFile, readdir, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { relative, dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { ToolRegistry } from '../core/registry.js';
-import { Workspace } from '../infra/files.js';
+import type { ToolRegistryPort } from '../core/tools/ports.js';
+import { Workspace } from '../infra/workspace/files.js';
 
-export function registerLocalTools(registry: ToolRegistry, workspace: Workspace): void {
+export function registerLocalTools(registry: ToolRegistryPort, workspace: Workspace): void {
   const cache = new VerifiedFileCache();
   registry.register({
     name: 'list_files',

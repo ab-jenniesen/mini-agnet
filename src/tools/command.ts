@@ -5,8 +5,8 @@ import { join, dirname } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { ToolRegistry } from '../core/registry.js';
-import type { Workspace } from '../infra/files.js';
+import type { ToolRegistryPort } from '../core/tools/ports.js';
+import type { Workspace } from '../infra/workspace/files.js';
 
 function executable(command: string, args: string[]): { command: string; args: string[] } {
   if (command === 'node') return { command: process.execPath, args };
@@ -166,7 +166,7 @@ export async function runCommand(
     });
   });
 }
-export function registerCommandTools(registry: ToolRegistry, workspace: Workspace) {
+export function registerCommandTools(registry: ToolRegistryPort, workspace: Workspace) {
   registry.register({
     name: 'run_command',
     description:

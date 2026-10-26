@@ -1,10 +1,11 @@
+import { FilePermissionAudit } from '../src/infra/permissions/file-audit.js';
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PermissionManager } from '../src/core/permissions/manager.js';
-import type { Tool } from '../src/core/types.js';
+import type { Tool } from '../src/core/model/types.js';
 const tool = (name: string): Tool => ({
   name,
   write: true,
@@ -16,10 +17,13 @@ test('permission decisions and append-only audit; command always asks', async ()
   const folder = await mkdtemp(join(tmpdir(), 'agent-permissions-'));
   let prompts = 0;
   try {
-    const p = new PermissionManager(join(folder, 'audit.jsonl'), async () => {
-      prompts++;
-      return true;
-    });
+    const p = new PermissionManager(
+      new FilePermissionAudit(join(folder, 'audit.jsonl')),
+      async () => {
+        prompts++;
+        return true;
+      },
+    );
     assert.equal(
       (await p.authorize(tool('write_file'), { path: 'a', content: 'x' })).decision,
       'approved',

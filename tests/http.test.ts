@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startHttpServer } from '../src/adapters/http/server.js';
 import { HttpAgentClient } from '../src/adapters/http/client.js';
-import type { RuntimeEvent } from '../src/app/contracts.js';
+import type { RuntimeEvent } from '../src/protocol/contracts.js';
 import { runtimeFixture, echoModel } from './helpers/runtime.js';
 
 test('HTTP/SSE clients share the runtime without terminal imports, using validated commands', async () => {

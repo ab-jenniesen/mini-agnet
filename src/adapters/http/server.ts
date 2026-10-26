@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import type { AgentRuntime } from '../../app/runtime.js';
-import { commandSchema } from '../../app/command-schema.js';
+import type { AgentClient, RuntimeSnapshot } from '../../protocol/index.js';
+import { commandSchema } from '../../protocol/commands.js';
 
 const BODY_LIMIT = 2 * 1024 * 1024;
 
@@ -26,7 +26,7 @@ function json(response: ServerResponse, status: number, value: unknown): void {
 
 /** A local authenticated host. Native/web/desktop clients all use the same JSON contract. */
 export async function startHttpServer(
-  runtime: AgentRuntime,
+  runtime: AgentClient & { snapshot(): RuntimeSnapshot },
   options: { port?: number; token?: string; origin?: string } = {},
 ) {
   await runtime.initialize();

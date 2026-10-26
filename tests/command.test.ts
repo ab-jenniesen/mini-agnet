@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Workspace } from '../src/infra/files.js';
+import { Workspace } from '../src/infra/workspace/files.js';
 import { runCommand } from '../src/tools/command.js';
 
 test('commands preserve argument boundaries, UTF-8 output, logs and platform npm execution', async () => {

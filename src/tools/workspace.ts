@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { ToolRegistry } from '../core/registry.js';
-import type { Workspace } from '../infra/files.js';
+import type { ToolRegistryPort } from '../core/tools/ports.js';
+import type { Workspace } from '../infra/workspace/files.js';
 /** PermissionManager must approve this tool even when write mode is `allow`. */
-export function registerWorkspaceTools(registry: ToolRegistry, workspace: Workspace): void {
+export function registerWorkspaceTools(registry: ToolRegistryPort, workspace: Workspace): void {
   registry.register({
     name: 'list_write_directories',
     description:

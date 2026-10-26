@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { access, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AgentRuntime } from '../src/app/runtime.js';
-import { verification, type CommandEvidence } from '../src/app/tasks.js';
-import type { Model, ModelReply } from '../src/core/types.js';
+import { AgentRuntime } from '../src/host/runtime.js';
+import { verification, type CommandEvidence } from '../src/core/execution/result.js';
+import type { Model, ModelReply } from '../src/core/model/types.js';
 import { runtimeFixture, echoModel } from './helpers/runtime.js';
 
 function replies(values: ModelReply[]): Model {
@@ -40,7 +40,7 @@ test('structured task results retain the legacy interface and survive session ch
     assert.equal(result.status, 'completed');
     assert.equal(result.summary, '答复：hello');
     assert.equal(result.verification.status, 'not_run');
-    assert.equal(result.metrics.modelCalls, 1);
+    assert.equal(result.metrics.modelCalls, 2);
     assert.equal(result.metrics.totalTokens, 12);
     assert.deepEqual(result.changes, []);
     await f.runtime.dispatch({ type: 'sessions.switch', id: 'other' });
@@ -48,7 +48,7 @@ test('structured task results retain the legacy interface and survive session ch
     await f.runtime.dispatch({ type: 'sessions.switch', id: 'default' });
     assert.equal(f.runtime.snapshot().task?.runId, result.runId);
     assert.equal(await f.runtime.dispatch({ type: 'run', input: 'legacy' }), '答复：legacy');
-    assert.equal(f.runtime.snapshot().task?.result?.metrics.modelCalls, 1);
+    assert.equal(f.runtime.snapshot().task?.result?.metrics.modelCalls, 2);
     await f.runtime.close();
     reopened = new AgentRuntime({
       root: f.directory,
@@ -205,7 +205,7 @@ test('only observed verification commands determine check status, and later writ
   assert.equal(verification([{ ...command(true), timedOut: true }]).status, 'failed');
 });
 
-test('actual writes and requested verification become structured evidence; failed checks prevent success', async () => {
+test('actual writes and command checks remain evidence separate from delivery completeness', async () => {
   for (const exitCode of [0, 1]) {
     const f = await runtimeFixture(
       replies([
@@ -247,12 +247,13 @@ test('actual writes and requested verification become structured evidence; faile
           });
       });
       const result = await f.runtime.dispatch({ type: 'tasks.run', input: 'write and verify' });
-      assert.equal(result.status, exitCode === 0 ? 'completed' : 'failed');
+      assert.equal(result.status, 'completed');
+      assert.equal(result.completeness?.status, 'not_applicable');
       assert.deepEqual(result.changes, ['new.ts']);
       assert.equal(result.verification.status, exitCode === 0 ? 'passed' : 'failed');
       assert.equal(result.verification.checks[0]?.exitCode, exitCode);
-      assert.equal(result.metrics.modelCalls, 3);
-      assert.equal(result.metrics.toolCalls, 2);
+      assert.equal(result.metrics.modelCalls, 4);
+      assert.equal(result.metrics.toolCalls, 3);
       assert.equal(result.evidence.length, 2);
     } finally {
       await f.close();
@@ -291,11 +292,11 @@ test('denied writes mark tasks blocked and create no file-change evidence', asyn
   }
 });
 
-test('failed result persistence is visible as failure instead of completed', async () => {
+test('failed authoritative execution persistence cannot report completion', async () => {
   const f = await runtimeFixture(echoModel);
   try {
     await f.runtime.initialize();
-    await mkdir(join(f.directory, '.mini-agent/tasks/default.json'));
+    await mkdir(join(f.directory, '.mini-agent/executions/default.json'), { recursive: true });
     const result = await f.runtime.dispatch({ type: 'tasks.run', input: 'go' });
     assert.equal(result.status, 'failed');
     assert.equal(result.error?.code, 'persistence_error');
@@ -305,12 +306,33 @@ test('failed result persistence is visible as failure instead of completed', asy
   }
 });
 
-test('a newer interrupted run never inherits an older successful task result', async () => {
+test('legacy result cache failure preserves the committed execution and emits a notice', async () => {
+  const f = await runtimeFixture(echoModel);
+  try {
+    await f.runtime.initialize();
+    const notices: string[] = [];
+    f.runtime.subscribe((event) => {
+      if (event.type === 'notice') notices.push(event.text);
+    });
+    await mkdir(join(f.directory, '.mini-agent/tasks/default.json'));
+    const result = await f.runtime.dispatch({ type: 'tasks.run', input: 'go' });
+    assert.equal(result.status, 'completed');
+    const execution = await f.runtime.dispatch({ type: 'execution.get' });
+    assert.equal(execution.runs.at(-1)?.status, 'completed');
+    assert.ok(notices.some((notice) => notice.includes('兼容缓存更新失败')));
+  } finally {
+    await f.close();
+  }
+});
+
+test('legacy journal recovery never inherits an older legacy result', async () => {
   const f = await runtimeFixture(echoModel);
   try {
     await f.runtime.initialize();
     const first = await f.runtime.dispatch({ type: 'tasks.run', input: 'first' });
     await f.runtime.dispatch({ type: 'sessions.switch', id: 'other' });
+    // Reproduce a V1.1 session without the authoritative V1.2 manifest.
+    await rm(join(f.directory, '.mini-agent/executions/default.json'));
     await writeFile(
       join(f.directory, '.mini-agent/journals/default.json'),
       JSON.stringify({
@@ -381,7 +403,10 @@ test('a terminal task event can start the next task without receiving the old er
     const first = await f.runtime.dispatch({ type: 'tasks.run', input: 'first' });
     assert.equal(first.status, 'failed');
     await next;
-    assert.deepEqual(events, ['running', 'error', 'failed', 'running', 'completed']);
+    assert.deepEqual(
+      events.filter((value, index) => value !== events[index - 1]),
+      ['running', 'error', 'failed', 'running', 'completed'],
+    );
     assert.equal(f.runtime.snapshot().task?.result?.summary, 'recovered');
   } finally {
     await f.close();

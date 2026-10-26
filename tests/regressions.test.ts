@@ -1,17 +1,18 @@
+import { FilePermissionAudit } from '../src/infra/permissions/file-audit.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Agent } from '../src/core/agent.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { ContextManager } from '../src/core/context/manager.js';
 import { PermissionManager } from '../src/core/permissions/manager.js';
-import { CredentialStore } from '../src/infra/credentials.js';
-import { LongTermMemory } from '../src/infra/long-memory.js';
-import { TodoStore } from '../src/infra/todos.js';
-import { loadSession } from '../src/infra/memory.js';
-import type { Message } from '../src/core/types.js';
+import { CredentialStore } from '../src/infra/configuration/credentials.js';
+import { LongTermMemory } from '../src/infra/storage/long-memory.js';
+import { TodoStore } from '../src/infra/storage/todo-store.js';
+import { loadSession } from '../src/infra/storage/session-store.js';
+import type { Message } from '../src/core/model/types.js';
 
 test('summary model calls contribute to turn usage and restored system instructions are refreshed', async () => {
   const agent = new Agent(
@@ -141,10 +142,13 @@ test('allow mode still asks before MCP calls, and read-only blocks them', async 
   const root = await mkdtemp(join(tmpdir(), 'mini-mcp-approval-'));
   try {
     let prompts = 0;
-    const permissions = new PermissionManager(join(root, 'audit.jsonl'), async () => {
-      prompts++;
-      return true;
-    });
+    const permissions = new PermissionManager(
+      new FilePermissionAudit(join(root, 'audit.jsonl')),
+      async () => {
+        prompts++;
+        return true;
+      },
+    );
     const tool = {
       name: 'mcp_external_action',
       description: '',

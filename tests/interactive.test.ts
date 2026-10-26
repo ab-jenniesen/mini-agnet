@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { diffPreview } from '../src/infra/diff.js';
-import { TodoStore } from '../src/infra/todos.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { diffPreview } from '../src/infra/workspace/diff.js';
+import { TodoStore } from '../src/infra/storage/todo-store.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { Agent } from '../src/core/agent.js';
-import type { Model } from '../src/core/types.js';
+import type { Model } from '../src/core/model/types.js';
 
 test('diff shows added and deleted lines', () => {
   const s = diffPreview('hello\nold', 'hello\nnew');

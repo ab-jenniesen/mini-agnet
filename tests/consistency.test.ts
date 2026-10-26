@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Workspace } from '../src/infra/files.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { Workspace } from '../src/infra/workspace/files.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { registerLocalTools } from '../src/tools/local.js';
-import { CompactionStore } from '../src/infra/compaction.js';
-import type { Message, Model } from '../src/core/types.js';
+import { CompactionStore } from '../src/infra/storage/compaction.js';
+import type { Message, Model } from '../src/core/model/types.js';
 import { ContextManager } from '../src/core/context/manager.js';
 
 test('fresh reads detect external edits, stale expected hash rejects overwrite', async () => {

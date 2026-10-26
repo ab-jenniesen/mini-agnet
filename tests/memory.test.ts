@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LongTermMemory } from '../src/infra/long-memory.js';
-import { ScopedMemory } from '../src/infra/scoped-memory.js';
+import { LongTermMemory } from '../src/infra/storage/long-memory.js';
+import { ScopedMemory } from '../src/infra/storage/scoped-memory.js';
 import { registerMemoryTools } from '../src/tools/memory.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { Agent } from '../src/core/agent.js';
-import type { Model } from '../src/core/types.js';
+import type { Model } from '../src/core/model/types.js';
 
 test('long-term memory survives reopen, supports search/update/delete', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-memory-'));

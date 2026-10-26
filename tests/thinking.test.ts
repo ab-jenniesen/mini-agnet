@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Agent } from '../src/core/agent.js';
-import { ToolRegistry } from '../src/core/registry.js';
-import type { Model } from '../src/core/types.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
+import type { Model } from '../src/core/model/types.js';
 
 test('thinking is forwarded to UI but never persisted in canonical messages', async () => {
   const events: string[] = [];

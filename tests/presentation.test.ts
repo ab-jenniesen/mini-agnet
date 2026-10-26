@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { initialPresentationState, reducePresentation } from '../src/presentation/view-model.js';
+import { initialPresentationState, reducePresentation } from '../src/ui/view-model.js';
 import { runtimeFixture, echoModel } from './helpers/runtime.js';
 
 test('presentation keeps transcript types separate and preserves error order while replacing notices', async () => {

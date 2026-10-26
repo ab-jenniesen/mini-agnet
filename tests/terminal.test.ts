@@ -6,12 +6,12 @@ import {
   visibleWidth,
   stripTerminalSequences,
 } from '@earendil-works/pi-tui';
-import { TerminalView } from '../src/presentation/terminal/view.js';
-import { SecretInput } from '../src/presentation/terminal/dialogs.js';
-import { reducePresentation, initialPresentationState } from '../src/presentation/view-model.js';
-import { helpText } from '../src/presentation/command-router.js';
-import { autocomplete } from '../src/presentation/terminal/autocomplete.js';
-import { TerminalController } from '../src/presentation/terminal/controller.js';
+import { TerminalView } from '../src/ui/terminal/view.js';
+import { SecretInput } from '../src/ui/terminal/dialogs.js';
+import { reducePresentation, initialPresentationState } from '../src/ui/view-model.js';
+import { helpText } from '../src/ui/command-router.js';
+import { autocomplete } from '../src/ui/terminal/autocomplete.js';
+import { TerminalController } from '../src/ui/terminal/controller.js';
 import { runtimeFixture, echoModel } from './helpers/runtime.js';
 import { FakeTerminal } from './helpers/terminal.js';
 
@@ -131,7 +131,7 @@ test('help is paged above the editor and notices replace each other', async () =
     view.panel('命令帮助', helpText());
     view.tui.renderNow();
     await terminal.flush();
-    assert.match(terminal.screen(), /类型：模型/);
+    assert.match(terminal.screen(), /类型：任务/);
     assert.match(terminal.screen(), /命令：/);
     const first = terminal.screen();
     terminal.input('\x1b[6~');
@@ -278,7 +278,7 @@ test('Ctrl+I reveals completed thinking and Ctrl+O cycles all three tool display
     view.tui.renderNow();
     await terminal.flush();
     assert.match(terminal.screen(), /已完成/);
-    assert.match(terminal.screen(), /未验证/);
+    assert.match(terminal.screen(), /纯回复，无文件验收/);
   } finally {
     await controller.close();
     terminal.dispose();

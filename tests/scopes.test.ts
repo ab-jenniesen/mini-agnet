@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ScopedMemory } from '../src/infra/scoped-memory.js';
-import { loadLayeredSkills } from '../src/infra/skills.js';
-import { resolveMcpServers } from '../src/infra/project-mcp.js';
-import { loadLayeredSettings } from '../src/infra/layered-settings.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { ScopedMemory } from '../src/infra/storage/scoped-memory.js';
+import { loadLayeredSkills } from '../src/infra/extensions/skills.js';
+import { resolveMcpServers } from '../src/infra/extensions/project-mcp.js';
+import { loadLayeredSettings } from '../src/infra/configuration/layered-settings.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { registerMemoryTools } from '../src/tools/memory.js';
 
 test('memory project isolation; global visible across both', async () => {

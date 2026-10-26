@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RuntimeEvent } from '../src/app/contracts.js';
+import type { RuntimeEvent } from '../src/protocol/contracts.js';
 import { runtimeFixture, echoModel } from './helpers/runtime.js';
 
 test('runtime initializes once, isolates subscribers, and persists typed messages with usage', async () => {

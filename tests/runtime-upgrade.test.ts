@@ -3,9 +3,9 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { VerifiedFileCache } from '../src/infra/file-cache.js';
-import { ExecutionJournal } from '../src/infra/execution-journal.js';
-import { ToolArtifacts } from '../src/infra/tool-artifacts.js';
+import { VerifiedFileCache } from '../src/infra/workspace/file-cache.js';
+import { ExecutionJournal } from '../src/infra/storage/execution-journal.js';
+import { ToolArtifacts } from '../src/infra/storage/tool-artifacts.js';
 
 test('validated file cache sees external edits despite same length', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agent-cache-'));

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { AgentRuntime } from './app/runtime.js';
+import { AgentRuntime } from './host/runtime.js';
 import { startHttpServer } from './adapters/http/server.js';
 
 const runtime = new AgentRuntime();

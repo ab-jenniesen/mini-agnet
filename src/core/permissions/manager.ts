@@ -1,31 +1,28 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import type { Tool } from '../types.js';
-export type PermissionMode = 'read-only' | 'ask' | 'allow';
-export type ApprovalDecision = 'approved' | 'denied' | 'auto' | 'blocked';
-export type ApprovalRequest = {
-  id: string;
-  toolCallId?: string;
-  name: string;
-  args: Record<string, unknown>;
-  mode: PermissionMode;
-  proposedSha256?: string;
-};
-export type ApprovalPresenter = (request: ApprovalRequest) => Promise<boolean>;
-export type PermissionEvent =
-  | { type: 'permission_changed'; mode: PermissionMode }
-  | { type: 'approval_result'; request: ApprovalRequest; decision: ApprovalDecision };
-export class PermissionManager {
+import type { Tool } from '../model/types.js';
+import type {
+  PermissionMode,
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalPresenter,
+  PermissionEvent,
+  PermissionAuditPort,
+  PermissionPort,
+} from './ports.js';
+export type {
+  PermissionMode,
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalPresenter,
+  PermissionEvent,
+} from './ports.js';
+export class PermissionManager implements PermissionPort {
   private mode: PermissionMode = 'ask';
   private listeners = new Set<(event: PermissionEvent) => void>();
   constructor(
-    private auditPath: string,
+    private readonly audit: PermissionAuditPort,
     private readonly presenter: ApprovalPresenter,
   ) {}
-  setAuditPath(path: string) {
-    this.auditPath = path;
-  }
   getMode() {
     return this.mode;
   }
@@ -67,7 +64,6 @@ export class PermissionManager {
     )
       decision = 'auto';
     else decision = (await this.presenter(request)) ? 'approved' : 'denied';
-    await mkdir(dirname(this.auditPath), { recursive: true });
     const record = {
       timestamp: new Date().toISOString(),
       id: request.id,
@@ -78,7 +74,7 @@ export class PermissionManager {
       proposedSha256: request.proposedSha256,
       path: typeof args.path === 'string' ? args.path : undefined,
     };
-    await appendFile(this.auditPath, JSON.stringify(record) + '\n', { mode: 0o600 });
+    await this.audit.write(record);
     this.emit({ type: 'approval_result', request, decision });
     return { allowed: decision === 'approved' || decision === 'auto', decision, request };
   }

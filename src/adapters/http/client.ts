@@ -4,7 +4,7 @@ import type {
   CommandResult,
   RuntimeEvent,
   RuntimeSnapshot,
-} from '../../app/contracts.js';
+} from '../../protocol/contracts.js';
 
 /** Browser-compatible adapter: only fetch, streams and shared type declarations. */
 export class HttpAgentClient implements AgentClient {

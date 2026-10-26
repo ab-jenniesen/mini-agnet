@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { AgentRuntime } from './app/runtime.js';
-import { runClassic } from './presentation/classic.js';
+import { AgentRuntime } from './host/runtime.js';
+import { runClassic } from './ui/classic.js';
 
 try {
   await runClassic(new AgentRuntime(), process.argv.slice(2).join(' ') || undefined);

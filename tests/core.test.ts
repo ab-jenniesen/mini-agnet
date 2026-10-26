@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Workspace } from '../src/infra/files.js';
-import { ToolRegistry } from '../src/core/registry.js';
+import { Workspace } from '../src/infra/workspace/files.js';
+import { ToolRegistry } from '../src/core/tools/registry.js';
 import { Agent } from '../src/core/agent.js';
-import type { Model } from '../src/core/types.js';
+import type { Model } from '../src/core/model/types.js';
 import type { AgentEvent } from '../src/core/events.js';
 import { registerLocalTools } from '../src/tools/local.js';
 

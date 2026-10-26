@@ -3,8 +3,8 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ProjectState } from '../src/infra/project-state.js';
-import { Workspace } from '../src/infra/files.js';
+import { ProjectState } from '../src/infra/workspace/project-state.js';
+import { Workspace } from '../src/infra/workspace/files.js';
 
 test('each launch folder has independent .mini-agent state', async () => {
   const base = await mkdtemp(join(tmpdir(), 'mini-project-state-'));

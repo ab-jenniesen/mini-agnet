@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { discoverModels } from '../src/core/model-discovery.js';
+import { discoverModels } from '../src/adapters/models/discovery.js';
 const original = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = original;

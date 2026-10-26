@@ -4,9 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ContextManager } from '../src/core/context/manager.js';
-import { ToolArtifacts } from '../src/infra/tool-artifacts.js';
-import { resolveContextCapability } from '../src/core/context/capabilities.js';
-import type { Message, Tool } from '../src/core/types.js';
+import { ToolArtifacts } from '../src/infra/storage/tool-artifacts.js';
+import { resolveContextCapability } from '../src/adapters/models/capabilities.js';
+import type { Message, Tool } from '../src/core/model/types.js';
 
 test('model-window override beats a static default and budget includes tool definitions', async () => {
   const m = new ContextManager({ compactThreshold: 1, safetyMargin: 0 });

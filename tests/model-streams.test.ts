@@ -1,8 +1,8 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CompatibleChatModel } from '../src/core/model.js';
-import { AnthropicModel, GeminiModel } from '../src/core/providers.js';
-import { readSseFrames } from '../src/core/providers/sse.js';
+import { CompatibleChatModel } from '../src/adapters/models/openai-compatible.js';
+import { AnthropicModel, GeminiModel } from '../src/adapters/models/providers.js';
+import { readSseFrames } from '../src/adapters/models/sse.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {

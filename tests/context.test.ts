@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ContextManager } from '../src/core/context/manager.js';
-import type { Message } from '../src/core/types.js';
+import type { Message } from '../src/core/model/types.js';
 
 test('removes a complete old turn, preserving request history', async () => {
   const h: Message[] = [

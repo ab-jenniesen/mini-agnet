@@ -1,200 +1,123 @@
-# Mini Agent 架构学习指南
+# Mini Agent 架构与代码阅读指南
 
-这份指南对应当前代码。建议先理解一条消息如何经过整个系统，再阅读模型协议、工具权限和存储细节。
+对应 V1.2.0 开发代码。版本方向见 [技术规划](./doc/technical-roadmap.md)，扩展代码示例见 [模块开发](./doc/module-development.md)。
 
-## 1. 先看四层边界
+## 1. 依赖方向
 
 ```mermaid
 flowchart TD
-  T[TUI / 经典 CLI] --> C[AgentClient 契约]
-  W[Web / 桌面 / App] --> H[HTTP / SSE 适配器]
-  H --> C
-  C --> R[AgentRuntime 应用运行时]
-  R --> K[TaskRunner 任务生命周期]
-  K --> A[Agent 模型与工具循环]
-  R --> S[会话 / 配置 / 审批队列]
-  A --> M[Model 接口与供应商适配]
-  A --> G[ToolRegistry]
-  G --> P[权限检查]
-  G --> U[内置工具 / MCP]
-  S --> I[文件与存储实现]
-  U --> I
+  Entry[启动入口] --> Host[host 默认装配]
+  Entry --> UI[ui 终端展示]
+  UI --> Protocol[protocol 命令与事件]
+  HTTP[adapters/http] --> Protocol
+  Host --> App[app 执行调度]
+  Host --> Impl[infra / tools / 模型 adapters]
+  App --> Protocol
+  App --> Core[core 规则与接口]
+  Impl --> Core
+  Protocol --> Core
 ```
 
-| 层       | 负责                                               | 主要文件                                    |
-| -------- | -------------------------------------------------- | ------------------------------------------- |
-| 展示     | 处理键盘、命令语法和布局，把事件映射成界面状态     | `src/presentation/`                         |
-| 应用     | 初始化服务、管理会话、派发动作、等待审批、保存数据 | `src/app/`                                  |
-| 核心     | 调用模型、执行工具、维持消息顺序、计算用量         | `src/core/`                                 |
-| 外部实现 | 文件、配置、记忆、命令进程、MCP 和网络传输         | `src/infra/`、`src/tools/`、`src/adapters/` |
+`core` 定义数据和规则，`app` 编排运行流程，`host` 选择具体实现。执行层只看到 `ExecutionServices` 中需要的能力，不知道工作区文件位置、终端或默认存储类。
 
-`src/tui.ts`、`src/cli.ts` 和 `src/server.ts` 是入口：它们负责把运行时与对应界面或服务连接起来。只有这些装配入口需要同时知道应用实现和界面实现。
+`ui` 的项目内依赖只允许指向 `ui` 与 `protocol`。协议类型不引用存储、模型厂商或宿主实现。HTTP 服务也依赖客户端契约及快照方法，不要求具体的 AgentRuntime 类。
 
-核心和应用层不导入 Pi TUI、Ink、React 或展示组件。终端控制器也不创建模型、执行工具或直接读写会话文件。
+`npm run check:boundaries` 检查静态导入、类型导入和字面量动态导入；`npm run check` 自动运行它。它用于发现层间反向依赖，不能替代运行环境隔离。
 
-## 2. 按这个顺序阅读
+## 2. 目录职责
 
-1. **`src/core/types.ts`**：认识 `Message`、`Model`、`Tool` 和 `Usage`。
-2. **`src/core/agent.ts`**：阅读 `runDetailed()`，理解模型与工具的循环，以及异常回复为何不能执行工具。
-3. **`src/core/registry.ts`**：理解参数校验、权限检查和工具结果。
-4. **`src/app/contracts.ts`**：理解一个客户端能发什么命令、收到什么事件。
-5. **`src/app/runtime.ts`**：理解服务装配、会话切换和动作派发；再读 `tasks.ts` 与 `task-runner.ts` 理解任务状态、结果和验证证据。
-6. **`src/app/services.ts`**：查看运行时如何组装实际模型、工具和存储。
-7. **`src/presentation/view-model.ts`**：学习纯函数如何把事件转换成界面状态。
-8. **`src/presentation/terminal/controller.ts` 与 `view.ts`**：分别看交互协调和 Pi TUI 布局。
-9. **`src/adapters/http/`**：看同一套契约如何通过网络使用。
+| 目录                                  | 负责                                   | 关键文件                                                       |
+| ------------------------------------- | -------------------------------------- | -------------------------------------------------------------- |
+| `core/model/`                         | 消息、模型接口、结束原因、模型元数据   | `types.ts`、`message-schema.ts`、`catalog.ts`                  |
+| `core/context/`                       | 上下文接口、预算与压缩策略、Token 估计 | `ports.ts`、`manager.ts`、`tokens.ts`                          |
+| `core/tools/`                         | 工具注册、参数校验、调用与委托         | `ports.ts`、`registry.ts`                                      |
+| `core/permissions/`                   | 权限策略与审计接口                     | `ports.ts`、`manager.ts`                                       |
+| `core/workflow/`                      | 图定义、校验、绑定与条件路由           | `definition.ts`、`ports.ts`                                    |
+| `core/execution/`                     | 四层状态、结果投影类型、验收报告约束   | `types.ts`、`ports.ts`、`acceptance.ts`                        |
+| `core/memory/`                        | 记忆数据与存取接口                     | `types.ts`、`ports.ts`                                         |
+| `app/tasks/`                          | Task/Run 生命周期与持久化边界          | `runner.ts`                                                    |
+| `app/execution/`                      | 固定外层流程、调用记录、模型和工具动作 | `engine.ts`、`model-step.ts`、`node-actions.ts`、`observer.ts` |
+| `app/nodes/`                          | 节点执行器、注册目录与可用性校验       | `types.ts`、`catalog.ts`、`agent.ts`、`model.ts`、`tool.ts`    |
+| `protocol/`                           | JSON 命令、事件、快照与校验            | `contracts.ts`、`commands.ts`、`index.ts`                      |
+| `host/`                               | 服务工厂、宿主生命周期与客户端命令派发 | `dependencies.ts`、`services.ts`、`runtime.ts`                 |
+| `adapters/models/`                    | 提供方协议、发现与能力解析             | `openai-compatible.ts`、`anthropic.ts`、`gemini.ts`            |
+| `infra/storage/`                      | 原子 JSON、执行状态、历史、记忆、日志  | `atomic-json.ts`、`execution-store.ts`、`task-persistence.ts`  |
+| `infra/workspace/`                    | 工作区路径、授权目录、项目状态         | `files.ts`、`project-state.ts`                                 |
+| `infra/configuration/`                | 文件配置、密钥、工具别名与工作流目录   | `workflows.ts`、`configured-tools.ts`                          |
+| `infra/extensions/`                   | Skills 加载和 MCP 连接                 | `skills.ts`、`project-mcp.ts`                                  |
+| `infra/permissions/`、`verification/` | 文件审计、审批预览、文件完整性检查     | `file-audit.ts`、`files.ts`                                    |
+| `tools/`                              | 工具描述、参数 Schema、注册与执行      | `local.ts`、`command.ts`、`memory.ts`、`todos.ts`              |
+| `ui/`                                 | 终端交互与展示投影                     | `view-model.ts`、`command-router.ts`、`terminal/`              |
 
-测试通常用假的模型、真实的临时文件目录和无界面终端验证行为，可以结合 `tests/runtime.test.ts`、`tests/terminal.test.ts` 和 `tests/http.test.ts` 阅读。
+工具注册与存储分别维护。例如 `tools/todos.ts` 定义模型可调用的操作，`infra/storage/todo-store.ts` 保存数据。权限策略通过 `PermissionAuditPort` 写审计，不直接打开日志文件。
 
-## 3. 一条消息的完整路径
+## 3. 四层对象与三类状态
 
-```mermaid
-sequenceDiagram
-  participant U as 用户
-  participant V as 终端控制器
-  participant R as AgentRuntime
-  participant A as Agent
-  participant M as Model
-  participant T as 工具与权限
-  U->>V: 输入内容并提交
-  V->>R: dispatch(tasks.run)
-  R-->>V: task(running)
-  R->>A: TaskRunner 调用 runDetailed(input, runId)
-  A-->>V: 用户消息事件
-  A->>M: complete(messages, tools)
-  M-->>V: 文本 / 思考进度
-  M-->>A: 回复与工具调用
-  A->>T: 参数校验与权限检查
-  T-->>V: approval_requested(id, preview)
-  U->>V: 确认
-  V->>R: dispatch(approvals.respond)
-  R-->>T: 审批结果
-  T-->>A: 工具结果
-  A->>M: 携带工具结果继续调用
-  M-->>A: 最终回复与用量
-  A-->>V: 助手消息事件
-  R->>R: TaskRunner 汇总证据并保存会话/结果
-  R-->>V: task(终态, result) 与状态快照
+```text
+Session：交流范围
+└─ Task[]：持续目标、目标版本、交付清单与行动计划
+   └─ Run[]：一次推进、工作流快照、业务 State、游标和指标
+      └─ NodeRun[]：一次进入节点的输入、输出、状态与 Attempt
 ```
 
-图中事件通过运行时转发，最终进入展示层的状态投影；Agent 并不直接调用终端组件。只有需要授权的工具才进入审批流程。
+| 数据                                | 归属                | 作用                                 |
+| ----------------------------------- | ------------------- | ------------------------------------ |
+| WorkflowDefinition / NodeDefinition | 配置目录及 Run 快照 | 描述要执行什么                       |
+| `run.state.data`                    | Run                 | 节点间传递业务数据                   |
+| Run / NodeRun / Operation           | 执行记录            | 描述实际发生了什么                   |
+| Session.history                     | 会话                | 保存规范的消息和工具结果             |
+| UI 展示状态                         | 客户端内存          | 草稿、滚动位置、工具折叠、思考与提示 |
 
-模型不会直接改文件。它返回工具名称和 JSON 参数，注册表验证后执行具体工具，再把结果作为 `tool` 消息交给模型。工具错误也会变成可见结果，让模型有机会调整下一步。
+业务 State 不包含生命周期和权限字段。输出映射只能写 `state.*`，客户端只能通过命令改变运行状态。
 
-任务不设固定模型调用轮数上限。模型继续请求有效工具时，循环执行工具并再次调用模型；正常返回不含工具调用的最终回复时结束核心循环。`core/completion.ts` 统一供应商结束原因，截断、拒绝、暂停和空回复通过带类型的错误结束。断流保留已收到的正文，未完成的工具调用不会执行。
+## 4. 一次命令的路径
 
-应用层的 `TaskRunner` 汇总实际工具证据，决定任务终态，再保存会话和结构化结果。未解决的授权拒绝标为受阻，当前失败检查和结果保存失败标为失败。模型正常回复也可能没有运行验证，因此 `completed` 和 `verification.status` 是两个独立字段，不能用模型一句“已测试”替代命令记录。
+1. UI 将输入变成结构化 Command。斜杠语法由 `ui/command-router.ts` 处理。
+2. AgentRuntime 校验命令、检查是否可并发操作，调用 TaskRunner。
+3. TaskRunner 选择或新建目标，创建 Run，通过 TaskPersistencePort 保存。
+4. ExecutionEngine 准备清单与计划；必要时产生持久等待请求。
+5. 图调度建立 NodeRun，解析输入，选取节点执行器。
+6. 执行器通过受观察的 Agent、模型或工具动作产生输出。
+7. 内核校验输出，提交 State 与下一节点游标后才继续。
+8. 执行图到达 `$end` 后，内核调用 DeliveryPort 检查，缺失文件重新进入执行子图。
+9. 保存结果，再发出完成事件；客户端根据事件和快照刷新。
 
-## 4. 四种容易混淆的数据
+Human 节点的持久等待由内核管理。普通节点插件只拿到输入副本、配置副本、取消信号和对应的受控动作，不直接拿到可修改的 Task/Run。
 
-**会话历史 `Message[]`** 是持久数据，记录用户、助手、工具调用与工具结果。助手消息携带用量和 `thinkingMs` 耗时；临时思考内容不写入会话。Agent 发出 `model_start`、`thinking_end` 事件，界面负责实时计时和格式化。耗时从请求开始算到首段正文；纯工具或非流式回复计到完成，不含工具执行时间。
+## 5. 可替换模块如何连接
 
-**运行事件 `RuntimeEvent`** 描述正在发生的变化，例如文本片段、工具开始、审批请求和任务错误。客户端订阅这些事件。事件都是可以 JSON 序列化的数据。
+`host/dependencies.ts` 是默认 Node 宿主的装配入口。未提供工厂时使用默认实现；提供工厂时由工厂负责创建相应能力。
 
-**任务结果 `TaskResult`** 是一次运行的终态记录，包含 `runId`、状态、摘要、结束原因、修改文件、工具证据、验证、未完成事项和本轮统计。`TaskSnapshot` 则还包含运行中和等待审批状态。它们由应用层生成，核心循环无需知道前端如何显示。`infra/task-results.ts` 校验并保存每个会话的最后一条结果；较新的中断日志存在时，不会显示旧任务成功结果。这里没有执行断点或自动恢复逻辑。
+- 模型和 Agent 循环分别替换，统一 Model、AgentLoopPort。
+- ContextPolicyPort 在启动、会话切换、上下文配置更新时使用同一工厂创建。
+- MemoryPort 同时供上下文召回和记忆工具使用，避免形成两份互不一致的记忆。
+- PermissionPort 负责决策，PermissionAuditPort 负责记录；计划确认是独立等待。
+- TaskPersistencePort 保存 Task/Run/NodeRun 及兼容缓存，工作流目录使用 WorkflowCatalogPort。
+- DeliveryPort 负责实际观察，内核再检查报告归属、每项覆盖和状态一致性。
+- 节点执行器以名称注册；配置通过 `config.executor` 选择，Human 等待保持内核语义。
+- 工具模块可以关闭，宿主模块有 setup / dispose 生命周期，观察器通过结构化事件接入。
 
-**展示状态 `PresentationState`** 是界面需要的数据：对话条目、正在流出的回答、当前工具、审批和最新提示。`thinkingHistory` 以消息位置保存当前会话收到的思考文本；助手消息提交时将流式文本移入这个内存投影，回复完成后仍可展开，工具调用专用的空正文回复也能展示思考。它不进入 Agent 历史、持久化或模型请求，切换、重置会话后清空。`reducePresentation()` 是纯函数，不读文件、不请求模型，也不依赖终端。
+这些扩展是受信任宿主代码；接口分离不构成代码沙箱。默认宿主仍管理本地会话索引、密钥和项目配置。替换任务存储不等于把整个宿主自动迁移到数据库。
 
-把状态提示放进会话历史，会导致提示反复出现在对话中。当前实现将提示单独保存并覆盖更新；帮助和查询结果则使用临时面板。工具只在完成后形成结果条目。
+## 6. 保存、恢复与事件
 
-`presentation/turns.ts` 按用户消息划分完整对话轮次，并投影每轮最近的工具记录。TUI 为各轮绘制独立边框，将流式内容接在活动轮次内；工具条数上限只作用于展示投影，不修改运行时的历史或模型请求。`core/context/defaults.ts` 统一定义默认 128k 总上下文和 8k 输出预留，CLI、TUI、HTTP 宿主使用同一预算设置。
+默认权威记录位于 `.mini-agent/executions/<session>.json`，一次原子写入同时保存 Run 状态、NodeRun、State、游标、等待、报告和规范历史。执行层查询返回最近成功提交的副本。
 
-工具展示模式保存在终端视图内：`Ctrl+O` 循环切换收起、最近记录、全部记录；投影在收起时汇总调用次数，并用 `callId` 防止结果提交与结束事件之间重复计数。思考文本默认折叠，`Ctrl+I` 直接展开或收起并刷新历史渲染缓存；展开时滚动到最近的思考块，耗时提示独立保留。刷新计时的定时器仅在模型思考时运行，结束或退出界面时释放。
+保存失败不能报告成功。兼容 `sessions/` 与 `tasks/` 缓存失败会单独提示，不覆盖已提交的权威结果。V1.1 数据可读取为兼容视图，不伪造完整 Task。
 
-## 5. 命令与审批为什么这样设计
+正常暂停发生在节点边界。重启发现进行中的 Run 会标记 interrupted，显式确认后重新启动中断节点；已经发生的外部动作可能重复。当前没有跨进程写锁和历史检查点回放。
 
-用户输入的 `/session work` 是展示层语法。`command-router.ts` 将它转换为：
+事件包含 scope；execution 事件另有 generationId 和修订号。观察器或某个 UI 抛错不影响其他订阅者与执行。慢同步观察器仍会占用宿主事件循环，应由扩展自行排队处理。
 
-```ts
-await client.dispatch({ type: 'sessions.switch', id: 'work' });
-```
+## 7. 阅读顺序与验证
 
-WebUI 可以直接让“切换会话”按钮发送相同动作，无须模拟斜杠文本。后端用 `command-schema.ts` 校验网络传来的数据。
+建议按以下顺序，每次只跟一条路径：
 
-审批也采用同样思路：宿主保存待审批请求，通过事件通知客户端；客户端按 ID 回复：
+1. `core/model/types.ts` → `core/agent.ts`：模型与工具循环。
+2. `core/workflow/definition.ts` → `core/execution/types.ts`：配置和运行对象。
+3. `app/ports.ts` → `app/tasks/runner.ts` → `app/execution/engine.ts`：依赖与生命周期。
+4. `app/nodes/` → `app/execution/node-actions.ts`：如何扩展节点并保留调用记录。
+5. `host/dependencies.ts` → `host/services.ts`：默认实现如何装配。
+6. `protocol/index.ts` → `adapters/http/client.ts` → `ui/view-model.ts`：同一个 Agent 如何接不同 UI。
 
-```ts
-await client.dispatch({
-  type: 'approvals.respond',
-  id: approval.request.id,
-  accepted: true,
-});
-```
-
-事件里没有 `resolve()` 函数，因此可以通过 HTTP、IPC 或 WebSocket 传递。取消或关闭宿主会拒绝待审批请求；已经结束的 ID 不能再次使用。
-
-## 6. 接入另一种界面
-
-Node.js 进程内可以直接创建运行时：
-
-```ts
-import { AgentRuntime } from './src/app/runtime.js';
-
-const client = new AgentRuntime({ root: process.cwd() });
-const unsubscribe = client.subscribe((event) => {
-  console.log(event.type);
-  if (event.type === 'approval_requested') {
-    void client.dispatch({
-      type: 'approvals.respond',
-      id: event.approval.request.id,
-      accepted: false,
-    });
-  }
-});
-
-try {
-  await client.initialize();
-  const result = await client.dispatch({ type: 'tasks.run', input: '列出当前目录的文件' });
-  console.log(result.status, result.verification.status);
-} finally {
-  unsubscribe();
-  await client.close();
-}
-```
-
-这个最小客户端默认拒绝需要审批的操作。实际客户端可以在 `approval_requested` 时展示自己的确认界面，并根据用户选择回复。
-
-浏览器端使用 HTTP 适配器：
-
-```ts
-import { HttpAgentClient } from './src/adapters/http/client.js';
-import { initialPresentationState, reducePresentation } from './src/presentation/view-model.js';
-
-const client = new HttpAgentClient('http://127.0.0.1:3000', accessToken);
-let state = initialPresentationState();
-
-client.subscribe((event) => {
-  state = reducePresentation(state, event);
-  renderYourComponents(state);
-});
-
-await client.initialize();
-const result = await client.dispatch({ type: 'tasks.run', input: '你好' });
-console.log(result.status, result.summary);
-// 页面卸载时调用 client.close()，关闭该客户端的连接。
-```
-
-`accessToken` 和 `renderYourComponents` 由前端提供。配置好后端的前端 Origin，接着实现消息列表、输入框和审批对话框即可。HTTP 客户端的 `close()` 断开连接；运行时的 `close()` 会取消任务、保存历史并释放外部进程。
-
-当前 HTTP 客户端会报告事件流断开；重新连接需要创建客户端并重新初始化。后端发送当前快照，最终消息可重新同步；流式片段没有持久事件重放。
-
-## 7. 存储与扩展的位置
-
-| 要改什么       | 从哪里开始                                                        |
-| -------------- | ----------------------------------------------------------------- |
-| 新终端样式     | `presentation/terminal/theme.ts`、`transcript-view.ts`、`view.ts` |
-| 新斜杠命令     | `presentation/commands.ts` 与 `command-router.ts`                 |
-| 新客户端动作   | `app/contracts.ts`、`command-schema.ts`、`runtime.ts`             |
-| 新工具         | `tools/` 中注册工具，再在 `app/services.ts` 接入                  |
-| 新模型协议     | 实现 `Model.complete()`，接入 `core/providers.ts`                 |
-| 上下文策略     | `core/context/manager.ts`                                         |
-| 会话文件格式   | `infra/memory.ts`                                                 |
-| 任务状态与结果 | `app/tasks.ts`、`task-runner.ts`、`infra/task-results.ts`         |
-| 长期记忆       | `infra/long-memory.ts`、`scoped-memory.ts`                        |
-| 其他通信方式   | 实现 `AgentClient`，可参考 `adapters/http/client.ts`              |
-
-`core/ports.ts` 定义上下文、工具归档和执行日志接口。Agent 使用接口，文件实现由运行时注入。今后可以替换数据库或远端存储，而不把这些实现写入模型循环。
-
-工具的 `evidence(args, result)` 从真实执行返回值提取有限记录。`ToolRegistry.invokeDetailed()` 返回面向模型的输出、执行状态和证据，Agent 通过 `tool_end` 转发；`TaskRunner` 监听这些数据。内置 `write_file` 记录路径，`run_command` 记录命令、退出码、超时、取消和日志位置。验证只统计 `purpose: 'verification'` 的命令，并以最后一次文件修改之后的检查为准。扩展工具需要自行提供证据；目前没有扫描全部磁盘变化来识别命令和 MCP 的副作用。
-
-项目用 Prettier 统一排版，并启用 TypeScript 严格检查及未使用代码检查。修改后运行 `npm run check`、`npm test` 和 `npm run format:check`。
+`tests/modules.test.ts` 用离线模型检查模块工厂、扩展节点、不可跳过的验收和模块清理。原有核心、权限、HTTP、终端测试继续保留。自动化检查不替代真实提供方和用户终端兼容性验证。

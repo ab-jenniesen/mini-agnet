@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import type { ToolRegistry } from '../core/registry.js';
-import type { ScopedMemory, MemoryScope } from '../infra/scoped-memory.js';
+import type { ToolRegistryPort } from '../core/tools/ports.js';
+import type { MemoryScope } from '../core/memory/types.js';
+import type { MemoryPort } from '../core/memory/ports.js';
 
 const scope = z.enum(['project', 'global']);
 /** Project memory is default; global writes always require the existing write approval flow. */
-export function registerMemoryTools(registry: ToolRegistry, memory: ScopedMemory): void {
+export function registerMemoryTools(registry: ToolRegistryPort, memory: MemoryPort): void {
   registry.register({
     name: 'memory_search',
     description: 'Search project and global long-term notes. Optional scope limits the search.',

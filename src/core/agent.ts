@@ -1,14 +1,29 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentMetrics, Message, Model, ModelReply, Tool, ToolCall, Usage } from './types.js';
+import type {
+  AgentMetrics,
+  Message,
+  Model,
+  ModelReply,
+  Tool,
+  ToolCall,
+  Usage,
+} from './model/types.js';
 import type { AgentEvent } from './events.js';
 import type { ArtifactPort, ContextPort, JournalPort } from './ports.js';
-import { ToolRegistry } from './registry.js';
-import { finishReason, ModelCompletionError, type ModelFinishReason } from './completion.js';
+import type { ToolRegistryPort, RegisteredTool } from './tools/ports.js';
+import { finishReason, ModelCompletionError, type ModelFinishReason } from './model/completion.js';
 
 export type AgentRunResult = {
   content: string;
   finishReason: ModelFinishReason;
   rawFinishReason?: string;
+};
+
+export type AgentInvocation = {
+  instructions?: string | (() => string);
+  toolRefs?: string[];
+  appendInput?: boolean;
+  additionalTools?: RegisteredTool[];
 };
 
 export type { AgentEvent } from './events.js';
@@ -44,7 +59,7 @@ export class Agent {
 
   constructor(
     private model: Model,
-    private readonly tools: ToolRegistry,
+    private readonly tools: ToolRegistryPort,
     systemPrompt: string,
     private readonly options: AgentOptions = {},
     initial: Message[] = [],
@@ -58,6 +73,9 @@ export class Agent {
 
   setModel(model: Model): void {
     this.model = model;
+  }
+  getModel(): Model {
+    return this.model;
   }
   setContext(context: ContextPort): void {
     this.options.context = context;
@@ -75,9 +93,15 @@ export class Agent {
     return (await this.runDetailed(input)).content;
   }
 
-  async runDetailed(input: string, runId: string = randomUUID()): Promise<AgentRunResult> {
+  async runDetailed(
+    input: string,
+    runId: string = randomUUID(),
+    invocation: AgentInvocation = {},
+  ): Promise<AgentRunResult> {
     if (this.running) throw new Error('Agent is already running');
     if (!input.trim()) throw new Error('Input must not be empty');
+    const tools = this.tools.scoped(invocation.toolRefs);
+    for (const tool of invocation.additionalTools ?? []) tools.register(tool);
     this.running = true;
     const started = performance.now();
     let turnUsage: Usage | undefined;
@@ -86,37 +110,67 @@ export class Agent {
     const meteredModel: Model = {
       complete: async (messages, tools, options) => {
         const start = performance.now();
-        const reply = await this.model.complete(messages, tools, options);
+        const id = randomUUID();
         this.metrics.modelCalls++;
-        this.metrics.modelMs += performance.now() - start;
-        if (reply.usage) {
-          this.metrics.promptTokens += reply.usage.promptTokens;
-          this.metrics.completionTokens += reply.usage.completionTokens;
-          this.metrics.totalTokens += reply.usage.totalTokens;
-          turnUsage = {
-            promptTokens: (turnUsage?.promptTokens ?? 0) + reply.usage.promptTokens,
-            completionTokens: (turnUsage?.completionTokens ?? 0) + reply.usage.completionTokens,
-            totalTokens: (turnUsage?.totalTokens ?? 0) + reply.usage.totalTokens,
-            ...(turnUsage?.estimated || reply.usage.estimated ? { estimated: true } : {}),
-          };
-        } else missingUsage = true;
-        return reply;
+        this.options.onProgress?.({ type: 'model_call', id, status: 'started' });
+        try {
+          const reply = await this.model.complete(messages, tools, options);
+          if (reply.usage) {
+            this.metrics.promptTokens += reply.usage.promptTokens;
+            this.metrics.completionTokens += reply.usage.completionTokens;
+            this.metrics.totalTokens += reply.usage.totalTokens;
+            turnUsage = {
+              promptTokens: (turnUsage?.promptTokens ?? 0) + reply.usage.promptTokens,
+              completionTokens: (turnUsage?.completionTokens ?? 0) + reply.usage.completionTokens,
+              totalTokens: (turnUsage?.totalTokens ?? 0) + reply.usage.totalTokens,
+              ...(turnUsage?.estimated || reply.usage.estimated ? { estimated: true } : {}),
+            };
+          } else missingUsage = true;
+          this.options.onProgress?.({
+            type: 'model_call',
+            id,
+            status: 'completed',
+            ms: performance.now() - start,
+            usage: reply.usage,
+          });
+          return reply;
+        } catch (error) {
+          this.options.onProgress?.({
+            type: 'model_call',
+            id,
+            status: 'failed',
+            ms: performance.now() - start,
+          });
+          throw error;
+        } finally {
+          this.metrics.modelMs += performance.now() - start;
+        }
       },
     };
     try {
       this.options.signal?.throwIfAborted();
       await this.options.journal?.begin(runId);
-      this.append({ role: 'user', content: input });
+      if (invocation.appendInput !== false) this.append({ role: 'user', content: input });
       // Continue until the model returns a final reply without tool calls.
       for (let step = 1; ; step++) {
         this.options.signal?.throwIfAborted();
         this.options.onProgress?.({ type: 'step', step });
+        const instructions =
+          typeof invocation.instructions === 'function'
+            ? invocation.instructions()
+            : invocation.instructions;
+        const requestHistory: Message[] = instructions
+          ? [
+              { role: 'system', content: `${this.history[0]?.content ?? ''}\n\n${instructions}` },
+              ...this.history.slice(1),
+            ]
+          : this.history;
         const prepared = this.options.context
           ? await this.options.context.prepare(
-              this.history,
+              requestHistory,
               meteredModel,
               this.options.signal,
-              this.tools.list(),
+              tools.list(),
             )
           : undefined;
         if (prepared) {
@@ -131,8 +185,8 @@ export class Agent {
 
         const { reply, thinkingMs } = await this.requestModel(
           meteredModel,
-          prepared?.messages ?? this.history,
-          this.tools.list(),
+          prepared?.messages ?? requestHistory,
+          tools.list(),
         );
         this.options.signal?.throwIfAborted();
 
@@ -178,7 +232,7 @@ export class Agent {
             rawFinishReason: reply.rawFinishReason,
           };
         }
-        for (const call of calls) await this.executeTool(call);
+        for (const call of calls) await this.executeTool(call, tools);
         this.options.signal?.throwIfAborted();
       }
     } catch (error) {
@@ -259,7 +313,7 @@ export class Agent {
     }
   }
 
-  private async executeTool(call: ToolCall): Promise<void> {
+  private async executeTool(call: ToolCall, tools: ToolRegistryPort): Promise<void> {
     this.options.signal?.throwIfAborted();
     let args: unknown;
     try {
@@ -270,7 +324,7 @@ export class Agent {
     this.options.onProgress?.({ type: 'tool_start', callId: call.id, name: call.name, args });
     await this.options.journal?.startTool(call.id, call.name);
     const start = performance.now();
-    const execution = await this.tools.invokeDetailed(
+    const execution = await tools.invokeDetailed(
       call.name,
       args,
       this.options.approve ?? (async () => false),

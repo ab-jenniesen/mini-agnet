@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import { ProcessTerminal } from '@earendil-works/pi-tui';
-import { AgentRuntime } from './app/runtime.js';
-import { runClassic } from './presentation/classic.js';
-import { TerminalView } from './presentation/terminal/view.js';
-import { TerminalController } from './presentation/terminal/controller.js';
+import { AgentRuntime } from './host/runtime.js';
+import { runClassic } from './ui/classic.js';
+import { TerminalView } from './ui/terminal/view.js';
+import { TerminalController } from './ui/terminal/controller.js';
 
 async function main(): Promise<void> {
   const runtime = new AgentRuntime();

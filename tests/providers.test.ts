@@ -9,8 +9,8 @@ import {
   AnthropicModel,
   GeminiModel,
   PROVIDERS,
-} from '../src/core/providers.js';
-import type { Message, Tool } from '../src/core/types.js';
+} from '../src/adapters/models/providers.js';
+import type { Message, Tool } from '../src/core/model/types.js';
 
 const tool: Tool = {
   name: 'echo',
